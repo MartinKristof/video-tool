@@ -8,6 +8,9 @@
  * browser. The invariant that matters most is that a track never ends up with
  * overlapping items — that is what keeps trim and ripple unambiguous.
  */
+import fs from "fs";
+import path from "path";
+import { docFromVideoEdit, suspiciousSegments } from "../lib/editor-import";
 import {
   addAsset, addItem, addTrack, docDuration, emptyDoc, findItem, isValidDoc,
   makeId, moveItem, removeItem, reorderTrack, rippleRemoveItem, setLayout,
@@ -258,6 +261,54 @@ head("captions: paging");
   a(captionPageAt(broken, 1.5) === null, "silence between pages shows nothing");
   a(captionPageAt(broken, 99) === null, "past the end shows nothing");
   a(paginateCaptions([], 1200).length === 0, "no words, no pages");
+}
+
+head("importing a real AI interview edit as editable clips");
+{
+  // Every video project with a topics array should come in as clips rather than
+  // one immovable block — that is the difference between "it opens" and "it is
+  // useful".
+  const ROOT = path.join(__dirname, "..", "data", "projects");
+  let checked = 0;
+  for (const id of fs.readdirSync(ROOT)) {
+    const f = path.join(ROOT, id, "project.json");
+    if (!fs.existsSync(f)) continue;
+    let p: { code?: string; animationType?: string; settings?: { fps?: number } };
+    try { p = JSON.parse(fs.readFileSync(f, "utf8")); } catch { continue; }
+    if (!p.code || p.animationType !== "video") continue;
+    const size = { width: 1920, height: 1080, fps: p.settings?.fps ?? 25 };
+    const imported = docFromVideoEdit(p.code, size);
+    if (!imported) continue;
+    checked++;
+    const tag = id.slice(0, 8);
+    a(isValidDoc(imported), `${tag}: imported document is valid`);
+    a(imported.assets.length === 1, `${tag}: one source asset registered`);
+    const clips = imported.tracks[0].items;
+    a(clips.length >= 2, `${tag}: ${clips.length} footage clips`);
+    a(clips.every((c) => "sourceIn" in c && "sourceOut" in c), `${tag}: every clip carries its source range`);
+    a(clips.every((c) => "assetId" in c && c.assetId === imported.assets[0].id), `${tag}: clips point at the registered asset`);
+    // Laid end to end, so the cut plays straight through with no black.
+    let cursor = 0;
+    const gapless = clips.every((c) => { const ok = c.from === cursor; cursor += c.durationInFrames; return ok; });
+    a(gapless, `${tag}: clips are laid end to end`);
+    a(docDuration(imported) === cursor, `${tag}: duration is the sum of the clips`);
+  }
+  a(checked > 0, `found at least one importable interview edit (checked ${checked})`);
+}
+
+head("flagging topics the generator left with no footage");
+{
+  const code = `const SRC = "/api/media/p/a.mp4";
+const SEGMENTS = [
+  { eyebrow: "Good", startSec: 10, endSec: 30 },
+  { eyebrow: "Broken", startSec: 125.1, endSec: 125.2 },
+  { eyebrow: "Also good", startSec: 60, endSec: 90 },
+];`;
+  const odd = suspiciousSegments(code, 25);
+  a(odd.length === 1 && odd[0].label === "Broken", `finds the near-empty topic (got ${JSON.stringify(odd)})`);
+  a(suspiciousSegments(code, 25, 0.05).length === 0, "threshold is respected");
+  const doc = docFromVideoEdit(code, { width: 1920, height: 1080, fps: 25 });
+  a(doc !== null && doc.tracks[0].items.length === 3, "the broken topic still imports — it is the user's to fix, not ours to drop");
 }
 
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);

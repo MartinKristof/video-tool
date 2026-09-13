@@ -28,6 +28,7 @@ import TypeBadge from "@/components/ui/TypeBadge";
 import { useCodeHistory } from "@/hooks/useCodeHistory";
 import { useDocHistory } from "@/hooks/useDocHistory";
 import { docDuration, docFromScene, type EditorDoc } from "@/lib/editor-doc";
+import { docFromVideoEdit, suspiciousSegments } from "@/lib/editor-import";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import type { PlayerRef } from "@remotion/player";
 import type { ResolvedClip } from "@/lib/timeline-extract";
@@ -873,17 +874,31 @@ export default function ProjectEditor() {
             variant="outline"
             size="sm"
             icon="layers"
-            title="Open this project in the visual editor. The existing composition becomes one block on a track — nothing is parsed or rewritten, and the code stays exactly as it is."
+            title="Open this project in the visual editor. An AI interview edit comes in as separate clips you can recut; anything else comes in as one block, with the code left untouched."
             onClick={() => {
               const evaluated = evalSceneCode(code);
-              commitDoc(
-                docFromScene(
-                  { width, height, fps: evaluated?.fps ?? project.settings.fps },
-                  code,
-                  evaluated?.durationInFrames ?? 250,
-                  project.name,
-                ),
-              );
+              const size = { width, height, fps: evaluated?.fps ?? project.settings.fps };
+
+              // An edit driven by a topics array carries its own decisions as
+              // structured data — which footage, named how — so rebuild those as
+              // real clips rather than dropping the whole thing in as one
+              // immovable block. Falls back to the block for everything else.
+              const imported = docFromVideoEdit(code, size);
+              if (imported) {
+                commitDoc(imported);
+                const odd = suspiciousSegments(code, size.fps);
+                if (odd.length > 0) {
+                  window.setTimeout(() => window.alert(
+                    `Imported ${imported.tracks[0].items.length} clips.\n\n` +
+                    `Heads up — ${odd.length === 1 ? "one topic has" : `${odd.length} topics have`} almost no footage, ` +
+                    `so ${odd.length === 1 ? "it is" : "they are"} nearly invisible in the finished video:\n` +
+                    odd.map((o) => `  • ${o.label} — ${o.seconds.toFixed(2)}s`).join("\n") +
+                    `\n\nThat came from the generated edit, not the import. Trim the clip out or drag its edge to fix it.`,
+                  ), 300);
+                }
+                return;
+              }
+              commitDoc(docFromScene(size, code, evaluated?.durationInFrames ?? 250, project.name));
             }}
           >
             Open in editor
