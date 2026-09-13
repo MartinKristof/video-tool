@@ -1,3 +1,5 @@
+import type { EditorDoc } from "./editor-doc";
+
 export type AnimationType = "broll" | "animation" | "svg" | "video" | "terminal";
 // Rendering engine for a project. Remotion (React/`useCurrentFrame`) is the
 // default and original engine; HyperFrames (HTML + GSAP, rendered by its own
@@ -92,6 +94,13 @@ export interface Project {
   // Which renderer owns `code`. Optional for backward compat — undefined means remotion.
   engine?: Engine;
   settings: ProjectSettings;
+  /**
+   * The visual editor's document — tracks of items. When present this is the
+   * source of truth for the video and the project opens in the editor; when
+   * absent the project is code-first and opens in the legacy code editor.
+   * Existing projects have no `doc` and are untouched.
+   */
+  doc?: EditorDoc;
   code: string;
   chatHistory: ChatMessage[];
   initialPrompt: string;
