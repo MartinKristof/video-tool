@@ -2,8 +2,10 @@ import React, { useMemo } from "react";
 import { AbsoluteFill, Audio, Img, OffthreadVideo, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import { evalSceneCode } from "./DynamicScene";
 import {
+  captionPageAt,
   docDuration,
   getAsset,
+  paginateCaptions,
   type Asset,
   type AudioItem,
   type CaptionsItem,
@@ -151,28 +153,34 @@ const SolidLayer: React.FC<{ item: SolidItem }> = ({ item }) => (
 );
 
 /**
- * Captions render the words active at the current frame, highlighting the one
- * being spoken. Token times are seconds into the COMPOSITION, so they stay valid
- * however the item is moved or trimmed on the timeline.
+ * Captions show a page of words at a time, highlighting the one being spoken.
+ *
+ * `useCurrentFrame()` inside a <Sequence> is already item-relative, and caption
+ * token times are item-relative too, so the two line up with no offset maths —
+ * which is what keeps captions in sync when the item is dragged or trimmed.
  */
 const CaptionsLayer: React.FC<{ item: CaptionsItem }> = ({ item }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const nowSec = (item.from + frame) / fps;
-  const pageSec = (item.pageDurationMs ?? 1200) / 1000;
-  const page = Math.floor(nowSec / pageSec);
-  const words = item.tokens.filter(
-    (t) => t.startSec >= page * pageSec && t.startSec < (page + 1) * pageSec,
+  const pages = useMemo(
+    () => paginateCaptions(item.tokens, item.pageDurationMs ?? 1200, item.maxWordsPerPage ?? 6),
+    [item.tokens, item.pageDurationMs, item.maxWordsPerPage],
   );
-  if (words.length === 0) return null;
+  const sec = frame / fps;
+  const page = captionPageAt(pages, sec);
+  if (!page) return null;
   return (
     <div style={{ ...layoutStyle(item.layout), display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{ ...textStyle(item.style), textAlign: "center" }}>
-        {words.map((w, i) => {
-          const active = nowSec >= w.startSec && nowSec < w.endSec;
+        {page.tokens.map((w, i) => {
+          const active = sec >= w.startSec && sec < w.endSec;
           return (
-            <span key={i} style={{ color: active ? item.highlightColor ?? item.style.color : item.style.color }}>
-              {w.text}{" "}
+            <span
+              key={i}
+              style={{ color: active ? item.highlightColor ?? item.style.color : item.style.color }}
+            >
+              {w.text}
+              {i < page.tokens.length - 1 ? " " : ""}
             </span>
           );
         })}

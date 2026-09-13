@@ -127,7 +127,15 @@ export interface SolidItem extends ItemBase {
   color: string;
 }
 
-/** One spoken word with its timing, in seconds into the composition. */
+/**
+ * One spoken word, timed in seconds FROM THE START OF ITS ITEM — not from the
+ * start of the composition.
+ *
+ * That choice is deliberate: item-relative times move and trim with the item, so
+ * dragging captions along the timeline keeps them in sync with the words. Times
+ * anchored to the composition would silently desync the moment anything moved,
+ * which is exactly how the full-length audio bed caught us out.
+ */
 export interface CaptionToken {
   text: string;
   startSec: number;
@@ -142,7 +150,8 @@ export interface CaptionsItem extends ItemBase {
   highlightColor?: string;
   /** How long one page of words stays on screen, in milliseconds. */
   pageDurationMs?: number;
-  maxLines?: number;
+  /** Most words shown at once before the page breaks. */
+  maxWordsPerPage?: number;
 }
 
 /**
@@ -574,4 +583,64 @@ export function snapBox(
   const gx = axis(x, width, [0, size.width / 2, size.width]);
   const gy = axis(y, height, [0, size.height / 2, size.height]);
   return { x: gx.pos, y: gy.pos, guideX: gx.guide, guideY: gy.guide };
+}
+
+/** A group of caption words shown together. */
+export interface CaptionPage {
+  startSec: number;
+  endSec: number;
+  tokens: CaptionToken[];
+}
+
+/**
+ * Group caption words into pages that fit on screen.
+ *
+ * A page closes when it has run for `pageDurationMs`, when it reaches
+ * `maxWords`, or when there is a real pause in the speech — a gap longer than
+ * `gapSec` means a new thought, and breaking there reads far better than
+ * breaking mid-phrase on a timer.
+ *
+ * Kept here as a pure function rather than pulled in from @remotion/captions so
+ * the behaviour is ours to test and tune; that package's
+ * `createTikTokStyleCaptions` is the alternative if this ever needs to do more.
+ */
+export function paginateCaptions(
+  tokens: CaptionToken[],
+  pageDurationMs = 1200,
+  maxWords = 6,
+  gapSec = 0.6,
+): CaptionPage[] {
+  const pages: CaptionPage[] = [];
+  let current: CaptionToken[] = [];
+  const flush = () => {
+    if (current.length === 0) return;
+    pages.push({
+      startSec: current[0].startSec,
+      endSec: current[current.length - 1].endSec,
+      tokens: current,
+    });
+    current = [];
+  };
+
+  for (const token of tokens) {
+    if (current.length > 0) {
+      const pageStart = current[0].startSec;
+      const prevEnd = current[current.length - 1].endSec;
+      const tooLong = (token.endSec - pageStart) * 1000 > pageDurationMs;
+      const tooMany = current.length >= maxWords;
+      const pause = token.startSec - prevEnd > gapSec;
+      if (tooLong || tooMany || pause) flush();
+    }
+    current.push(token);
+  }
+  flush();
+  return pages;
+}
+
+/** The page showing at `sec` (item-relative), or null between pages. */
+export function captionPageAt(pages: CaptionPage[], sec: number): CaptionPage | null {
+  for (const page of pages) {
+    if (sec >= page.startSec && sec < page.endSec) return page;
+  }
+  return null;
 }

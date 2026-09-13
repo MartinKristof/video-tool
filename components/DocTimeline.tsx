@@ -87,6 +87,7 @@ export default function DocTimeline({
   const [snapOn, setSnapOn] = useState(true);
   const [containerWidth, setContainerWidth] = useState(900);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [captionsBusy, setCaptionsBusy] = useState<string | null>(null);
   const deltaRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const rulerRef = useRef<HTMLDivElement>(null);
@@ -292,6 +293,64 @@ export default function DocTimeline({
     onSelectionChange(new Set([common.id]));
   }, [doc, currentFrame, fps, commit, onSelectionChange]);
 
+  /**
+   * Transcribe a media file and drop its words in as a captions layer.
+   *
+   * Token times come back relative to the FILE, and a captions item stores times
+   * relative to ITSELF, so they are rebased to the first spoken word. That is
+   * what lets the finished layer be dragged anywhere on the timeline without the
+   * words drifting out of sync.
+   */
+  const addCaptions = useCallback(async (file: MediaFile) => {
+    setCaptionsBusy(file.path);
+    try {
+      const res = await fetch(`/api/captions/${projectId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file: file.path }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Transcription failed");
+      const { tokens } = (await res.json()) as { tokens: { text: string; startSec: number; endSec: number }[] };
+      if (!tokens?.length) throw new Error("No speech found");
+
+      const base = tokens[0].startSec;
+      const rebased = tokens.map((t) => ({ ...t, startSec: t.startSec - base, endSec: t.endSec - base }));
+      const spanSec = rebased[rebased.length - 1].endSec;
+      const trackId = doc.tracks[doc.tracks.length - 1].id;
+      const height = Math.round(doc.size.height * 0.22);
+      const item = {
+        type: "captions" as const,
+        id: makeId("captions"),
+        from: currentFrame,
+        durationInFrames: Math.max(1, Math.round(spanSec * fps)),
+        layout: {
+          x: Math.round(doc.size.width * 0.08),
+          y: Math.round(doc.size.height - height - doc.size.height * 0.08),
+          width: Math.round(doc.size.width * 0.84),
+          height,
+        },
+        tokens: rebased,
+        style: {
+          fontFamily: "Inter, sans-serif",
+          fontSize: Math.round(doc.size.height * 0.058),
+          fontWeight: 700,
+          color: "#F4F4F5",
+          align: "center" as const,
+        },
+        highlightColor: "#F86606",
+        pageDurationMs: 1200,
+        maxWordsPerPage: 6,
+      };
+      commit(addItem(doc, trackId, item as EditorItem));
+      onSelectionChange(new Set([item.id]));
+      setPickerOpen(false);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Transcription failed");
+    } finally {
+      setCaptionsBusy(null);
+    }
+  }, [doc, projectId, currentFrame, fps, commit, onSelectionChange]);
+
   // ── rendering ─────────────────────────────────────────────────────────────
   const ticks = useMemo(() => {
     const step = Math.max(1, Math.round(fps / Math.max(0.25, pxPerFrame * fps / 90)));
@@ -418,6 +477,16 @@ export default function DocTimeline({
                     → {t.name}
                   </button>
                 ))}
+                {(f.type === "video" || f.type === "audio") && (
+                  <button
+                    onClick={() => addCaptions(f)}
+                    disabled={captionsBusy !== null}
+                    title="Transcribe this file and add its words as a captions layer"
+                    style={{ ...toolBtn, color: "var(--accent)" }}
+                  >
+                    {captionsBusy === f.path ? "transcribing…" : "captions"}
+                  </button>
+                )}
               </div>
             ))
           )}

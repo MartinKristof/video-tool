@@ -3,7 +3,7 @@
 import React from "react";
 import {
   findItem, setLayout, updateItem,
-  type EditorDoc, type EditorItem, type SolidItem, type TextItem,
+  type CaptionsItem, type EditorDoc, type EditorItem, type SolidItem, type TextItem,
 } from "@/lib/editor-doc";
 
 /**
@@ -141,6 +141,55 @@ export default function EditorInspector({
                 {al[0].toUpperCase()}
               </button>
             ))}
+          </div>
+        </>
+      )}
+
+      {item.type === "captions" && (
+        <>
+          <div style={{ fontSize: 10, color: "var(--text-3)", marginBottom: 8 }}>
+            {(item as CaptionsItem).tokens.length} words transcribed
+          </div>
+          <div style={row}>
+            <span style={label}>Size</span>
+            <NumberField
+              value={(item as CaptionsItem).style.fontSize}
+              onCommit={(n) => onChange(updateItem<CaptionsItem>(doc, item.id, { style: { ...(item as CaptionsItem).style, fontSize: Math.max(4, n) } }))}
+            />
+          </div>
+          <div style={row}>
+            <span style={label}>Colour</span>
+            <input
+              type="color"
+              value={(item as CaptionsItem).style.color}
+              onChange={(e) => onChange(updateItem<CaptionsItem>(doc, item.id, { style: { ...(item as CaptionsItem).style, color: e.target.value } }))}
+              style={{ ...input, padding: 0, height: 24 }}
+            />
+          </div>
+          <div style={row}>
+            <span style={label}>Spoken</span>
+            <input
+              type="color"
+              title="Colour of the word being spoken"
+              value={(item as CaptionsItem).highlightColor ?? "#F86606"}
+              onChange={(e) => onChange(updateItem<CaptionsItem>(doc, item.id, { highlightColor: e.target.value }))}
+              style={{ ...input, padding: 0, height: 24 }}
+            />
+          </div>
+          <div style={row}>
+            <span style={label}>Page ms</span>
+            <NumberField
+              step={100}
+              value={(item as CaptionsItem).pageDurationMs ?? 1200}
+              onCommit={(n) => onChange(updateItem<CaptionsItem>(doc, item.id, { pageDurationMs: Math.max(200, n) }))}
+            />
+          </div>
+          <div style={row}>
+            <span style={label}>Max words</span>
+            <NumberField
+              value={(item as CaptionsItem).maxWordsPerPage ?? 6}
+              onCommit={(n) => onChange(updateItem<CaptionsItem>(doc, item.id, { maxWordsPerPage: Math.max(1, Math.round(n)) }))}
+            />
           </div>
         </>
       )}

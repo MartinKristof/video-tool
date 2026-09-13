@@ -13,7 +13,7 @@ import os from "os";
 import path from "path";
 import { bundle } from "@remotion/bundler";
 import { selectComposition, renderStill } from "@remotion/renderer";
-import { emptyDoc, addItem, addTrack, docDuration, type EditorDoc, type SceneItem, type SolidItem, type TextItem } from "../lib/editor-doc";
+import { emptyDoc, addItem, addTrack, docDuration, type CaptionsItem, type EditorDoc, type SceneItem, type SolidItem, type TextItem } from "../lib/editor-doc";
 
 let pass = 0, fail = 0;
 const a = (c: boolean, m: string) => { if (c) pass++; else { fail++; console.log("  FAIL: " + m); } };
@@ -44,6 +44,23 @@ function fixture(): EditorDoc {
     type: "text", id: "title", from: 0, durationInFrames: 30, layout: { ...full },
     text: "HELLO", style: { fontFamily: "sans-serif", fontSize: 64, color: "#ffffff", align: "center" },
   } as TextItem);
+  // Captions on a third track — word times are item-relative, so frame 66 and
+  // frame 84 fall on different words and must therefore render differently.
+  doc = addTrack(doc, "Captions");
+  const cap = doc.tracks[2].id;
+  doc = addItem(doc, cap, {
+    type: "captions", id: "caps", from: 60, durationInFrames: 30,
+    layout: { x: 0, y: 240, width: SIZE.width, height: 90 },
+    tokens: [
+      { text: "first", startSec: 0.0, endSec: 0.3 },
+      { text: "second", startSec: 0.3, endSec: 0.6 },
+      { text: "third", startSec: 0.7, endSec: 1.0 },
+    ],
+    style: { fontFamily: "sans-serif", fontSize: 40, color: "#ffffff", align: "center" },
+    highlightColor: "#ff9900",
+    pageDurationMs: 700,
+    maxWordsPerPage: 2,
+  } as CaptionsItem);
   return doc;
 }
 
@@ -90,6 +107,17 @@ registerRoot(Root);
     }
     a(!shots.red.equals(shots.blue), "frame 10 and frame 45 differ — items are positioned in time");
     a(!shots.blue.equals(shots.scene), "frame 45 and frame 75 differ — the AI scene item renders");
+
+    // Captions: item-relative timing means frame 66 is inside the first page and
+    // frame 84 is inside the second, so the two frames must differ.
+    const capShots: Record<string, Buffer> = {};
+    for (const [label, frame] of [["capA", 66], ["capB", 84]] as const) {
+      const out = path.join(tmp, `${label}.png`);
+      await renderStill({ composition, serveUrl, output: out, frame, imageFormat: "png" });
+      capShots[label] = fs.readFileSync(out);
+    }
+    a(!capShots.capA.equals(capShots.capB), "caption pages change as words are spoken");
+    a(!capShots.capA.equals(shots.scene), "captions paint over the scene item beneath them");
 
     // The same frame must render identically twice: the render is deterministic,
     // which is what makes preview-vs-export parity meaningful.

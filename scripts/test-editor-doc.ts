@@ -11,8 +11,8 @@
 import {
   addAsset, addItem, addTrack, docDuration, emptyDoc, findItem, isValidDoc,
   makeId, moveItem, removeItem, reorderTrack, rippleRemoveItem, setLayout,
-  resizeLayout, snapBox, splitItem, trimItem, updateItem,
-  type Asset, type EditorDoc, type SolidItem, type TextItem, type VideoItem,
+  captionPageAt, paginateCaptions, resizeLayout, snapBox, splitItem, trimItem, updateItem,
+  type Asset, type CaptionToken, type EditorDoc, type SolidItem, type TextItem, type VideoItem,
 } from "../lib/editor-doc";
 
 let pass = 0, fail = 0;
@@ -225,6 +225,39 @@ head("canvas: snapping to the frame");
   a(none.x === 300 && none.guideX === null, `nothing nearby, nothing moves (got ${none.x})`);
   const vert = snapBox(300, 197, 200, 100, size, 8);
   a(vert.y === 200 && vert.guideY === 250, "vertical centre snaps independently");
+}
+
+head("captions: paging");
+{
+  const say = (words: string[], start = 0, each = 0.3, gapBefore = 0): CaptionToken[] => {
+    let t = start + gapBefore;
+    return words.map((w) => { const tok = { text: w, startSec: t, endSec: t + each }; t += each; return tok; });
+  };
+
+  // Plain run of speech: breaks on the word cap.
+  const many = say(["one","two","three","four","five","six","seven","eight"]);
+  const pages = paginateCaptions(many, 100000, 3, 10);
+  a(pages.length === 3, `8 words at 3 per page = 3 pages (got ${pages.length})`);
+  a(pages[0].tokens.map(t => t.text).join(" ") === "one two three", "first page holds the first three");
+  a(pages[2].tokens.length === 2, "last page holds the remainder");
+
+  // The duration cap closes a page even mid-phrase.
+  const timed = paginateCaptions(many, 700, 99, 10);
+  a(timed.length > 1, "a long run is split by the duration cap");
+  a(timed.every(p => (p.endSec - p.startSec) * 1000 <= 700 + 1), "no page outruns its duration cap");
+
+  // A real pause should break the page — reads far better than a timer break.
+  const sentence = [...say(["hello","there"]), ...say(["new","thought"], 2.5)];
+  const broken = paginateCaptions(sentence, 100000, 99, 0.6);
+  a(broken.length === 2, `a 1.9s pause starts a new page (got ${broken.length})`);
+  a(broken[1].tokens[0].text === "new", "the break lands at the pause");
+
+  // Lookup, including the gaps between pages.
+  a(captionPageAt(broken, 0.1)?.tokens[0].text === "hello", "finds the page at a time inside it");
+  a(captionPageAt(broken, 2.6)?.tokens[0].text === "new", "finds the later page");
+  a(captionPageAt(broken, 1.5) === null, "silence between pages shows nothing");
+  a(captionPageAt(broken, 99) === null, "past the end shows nothing");
+  a(paginateCaptions([], 1200).length === 0, "no words, no pages");
 }
 
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);
