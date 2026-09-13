@@ -2,6 +2,10 @@ import {
   parseTimeline,
   parseSequenceBlocks,
   normalizeSeriesToSequences,
+  parseTransitionSeries,
+  durationWithConstant,
+  resolveExprInCode,
+  type TransitionChild,
 } from "./timeline-parser";
 
 /**
@@ -25,6 +29,15 @@ export interface EditableClip {
   kind: "video" | "audio" | "scene";
   /** Name shown on the clip in the timeline. */
   label: string;
+  /**
+   * Where the clip's position comes from.
+   *  - "explicit"  → a `from={N}` attribute we patch directly.
+   *  - "implicit"  → a <TransitionSeries> child, whose position is a running
+   *                  total less the transition overlaps. There is no `from` to
+   *                  patch: change a duration and everything after re-flows by
+   *                  itself, which is why trims here need no ripple.
+   */
+  position: "explicit" | "implicit";
   /**
    * Magnetic base track vs free track. The base track is gapless — ripple and
    * reorder re-pack it, as an NLE does. Free tracks (audio beds, captions over
@@ -58,6 +71,12 @@ export interface EditableClip {
   startFromAttrRange?: { start: number; end: number };
   endAtAttrRange?: { start: number; end: number };
   mediaAttrInsertAt?: number;
+  // Implicit clips only — how the duration may be rewritten, the expression it
+  // is written as, and the transition that follows (removed along with the
+  // clip on a delete).
+  durationEdit?: TransitionChild["durationEdit"];
+  durationExpr?: string;
+  transitionAfter?: { durationInFrames: number; blockStart: number; blockEnd: number } | null;
 }
 
 export interface EditableDoc {
@@ -81,6 +100,57 @@ function makeId(srcOrTag: string, index: number): string {
  * have implicit `from` derived from running totals — patching one attribute
  * can't reposition the rest).
  */
+/**
+ * Map a `<TransitionSeries>` into an editable doc. Positions are computed the
+ * way Remotion computes them (see parseTransitionSeries): a running total of the
+ * children's durations, less each transition's overlap.
+ *
+ * Editing is gated on every child's duration being rewritable — either a literal
+ * attribute or a constant the slot owns. A composition where one slot's timing
+ * is entangled with something else stays read-only rather than being cut wrongly.
+ */
+function docFromTransitionSeries(
+  code: string,
+  fps: number,
+  nativeFpsBySrc?: Record<string, number>,
+  maxSrcFrameBySrc?: Record<string, number>,
+): EditableDoc | null {
+  const ts = parseTransitionSeries(code, fps);
+  if (!ts) return null;
+  if (!ts.children.every((c) => c.durationEdit)) return null;
+
+  const clips: EditableClip[] = ts.children.map((c, i) => ({
+    id: makeId(c.src ?? c.kind, i),
+    kind: c.kind,
+    label: c.label,
+    position: "implicit",
+    track: "base",
+    src: c.src,
+    from: c.from,
+    durationInFrames: c.durationInFrames,
+    startFrom: c.startFrom,
+    endAt: c.endAt,
+    nativeFps: c.kind === "video" && c.src ? nativeFpsBySrc?.[c.src] : undefined,
+    maxSourceFrame: c.kind === "video" && c.src ? maxSrcFrameBySrc?.[c.src] : undefined,
+    sourceRange: { start: c.blockStart, end: c.blockEnd },
+    durationAttrRange: { start: c.durationValueStart, end: c.durationValueEnd },
+    startFromAttrRange: c.startFromRange ?? undefined,
+    endAtAttrRange: c.endAtRange ?? undefined,
+    mediaAttrInsertAt: c.mediaAttrInsertAt,
+    durationEdit: c.durationEdit,
+    durationExpr: c.durationExpr,
+    transitionAfter: c.nextTransition,
+  }));
+
+  return {
+    mode: "patch",
+    fps,
+    clips,
+    totalDurationInFrames: ts.totalDurationInFrames,
+    originalCode: code,
+  };
+}
+
 export function docFromCode(
   code: string,
   fps: number,
@@ -89,11 +159,11 @@ export function docFromCode(
 ): EditableDoc | null {
   if (!code || !code.trim()) return null;
 
-  // TransitionSeries gives each child an implicit position derived from a
-  // running total with frame overlaps, so patching one attribute can't
-  // reposition the rest. Correlating those to editable entries is separate work
-  // (roadmap 1c) — stay read-only rather than mis-cut.
-  if (/<TransitionSeries\b/.test(code)) return null;
+  // TransitionSeries children carry implicit positions, so they get their own
+  // mapping rather than the `from`-attribute one below.
+  if (/<TransitionSeries\b/.test(code)) {
+    return docFromTransitionSeries(code, fps, nativeFpsBySrc, maxSrcFrameBySrc);
+  }
 
   // Smart Trim writes <Series>, whose children also carry implicit positions.
   // Flatten it once into explicit <Sequence from={…}> blocks so there is a
@@ -122,6 +192,7 @@ export function docFromCode(
     id: makeId(b.src ?? b.kind, i),
     kind: b.kind,
     label: b.label,
+    position: "explicit",
     track: b.kind === baseKind ? "base" : "free",
     src: b.src,
     from: b.from,
@@ -185,7 +256,14 @@ export function analyzeEditability(
   if (parseTimeline(code, fps).length === 0) return { doc: null, reason: null };
 
   if (/<TransitionSeries\b/.test(code)) {
-    return { doc: null, reason: "Blended transitions — edit via chat or the code panel" };
+    const ts = parseTransitionSeries(code, fps);
+    if (!ts) {
+      return { doc: null, reason: "Blended transitions — edit via chat or the code panel" };
+    }
+    // Mapped fine, but at least one slot's length is tied to something else
+    // (a shared constant, or the composition's own duration), so changing it
+    // here would move more than the clip.
+    return { doc: null, reason: "Scene timings are shared — edit via chat or the code panel" };
   }
   if (/<Series\s*>/.test(code) && !normalizeSeriesToSequences(code, fps)) {
     return { doc: null, reason: "Series layout we can't map — edit via chat or the code panel" };
@@ -204,19 +282,19 @@ export function analyzeEditability(
  * exactly as it was.
  */
 export function codeFromDoc(doc: EditableDoc): string {
-  return applyEdits(doc.originalCode, collectClipEdits(doc.clips), totalOf(doc.clips));
+  return applyEdits(doc.originalCode, collectClipEdits(doc, doc.clips), totalOf(doc.clips), doc.fps);
 }
 
 type Edit = { start: number; end: number; replacement: string };
 
 /** Splice edits into `src` right-to-left so earlier offsets stay valid. */
-function applyEdits(src: string, edits: Edit[], total?: number): string {
+function applyEdits(src: string, edits: Edit[], total?: number, fps?: number): string {
   const sorted = [...edits].sort((a, b) => b.start - a.start);
   let out = src;
   for (const e of sorted) {
     out = out.slice(0, e.start) + e.replacement + out.slice(e.end);
   }
-  if (total != null) out = setDurationExport(out, total);
+  if (total != null) out = setDurationExport(out, total, fps);
   return out;
 }
 
@@ -229,11 +307,16 @@ function applyEdits(src: string, edits: Edit[], total?: number): string {
  * whose attributes aren't — so collapsing the export to a literal keeps the two
  * in agreement instead of letting them silently drift apart.
  */
-function setDurationExport(code: string, total: number): string {
-  return code.replace(
-    /(export\s+(?:const|let|var)\s+durationInFrames\s*=\s*)[^;]+/,
-    `$1${total}`,
-  );
+function setDurationExport(code: string, total: number, fps?: number): string {
+  const m = /(export\s+(?:const|let|var)\s+durationInFrames\s*=\s*)([^;]+)/.exec(code);
+  if (!m) return code;
+  // A symbolic export (`OPEN + S1 + … - T * 12`) written over slot constants
+  // recomputes itself when we patch one of those constants. Leave it alone when
+  // it already resolves to the right number; only collapse it to a literal when
+  // it has genuinely drifted out of step.
+  if (fps != null && resolveExprInCode(code, m[2], fps) === total) return code;
+  const valueStart = m.index + m[1].length;
+  return code.slice(0, valueStart) + String(total) + code.slice(m.index + m[0].length);
 }
 
 function totalOf(clips: EditableClip[]): number {
@@ -245,16 +328,56 @@ function totalOf(clips: EditableClip[]): number {
  * plus the source trim on the media tag inside it. A trim value that has no
  * attribute yet (a clip written without `startFrom`) is spliced in.
  */
-function collectClipEdits(clips: EditableClip[]): Edit[] {
+function collectClipEdits(doc: EditableDoc, clips: EditableClip[]): Edit[] {
   const edits: Edit[] = [];
   for (const c of clips) {
-    if (!c.fromAttrRange || !c.durationAttrRange) continue;
-    edits.push({ ...c.fromAttrRange, replacement: String(c.from) });
-    edits.push({ ...c.durationAttrRange, replacement: String(c.durationInFrames) });
+    if (!c.durationAttrRange) continue;
+    // Implicit clips have no `from` to write — their position is the running
+    // total, so re-flow is automatic once a duration changes.
+    if (c.position === "explicit") {
+      if (!c.fromAttrRange) continue;
+      edits.push({ ...c.fromAttrRange, replacement: String(c.from) });
+      edits.push({ ...c.durationAttrRange, replacement: String(c.durationInFrames) });
+    } else {
+      const durEdit = implicitDurationEdit(doc, c);
+      if (durEdit) edits.push(durEdit);
+    }
     pushTrimEdit(edits, c, "startFrom", c.startFrom, c.startFromAttrRange);
     pushTrimEdit(edits, c, "endAt", c.endAt, c.endAtAttrRange);
   }
   return edits;
+}
+
+/**
+ * Rewrite one TransitionSeries child's duration.
+ *
+ * Preferred route is the constant the slot owns: shifting `const S3 = 100` keeps
+ * the `{S3 + T}` expression intact and keeps any computed duration export
+ * correct by construction. The shift is solved rather than assumed — we measure
+ * what one unit of the constant is worth and then verify the result — so an
+ * expression like `{S3 * 2}` can't be silently mis-scaled. Falls back to writing
+ * a literal into the attribute, and to leaving the slot alone if neither proves
+ * out.
+ */
+function implicitDurationEdit(doc: EditableDoc, c: EditableClip): Edit | null {
+  if (!c.durationAttrRange || !c.durationEdit) return null;
+  const want = c.durationInFrames;
+
+  if (c.durationEdit.kind === "const" && c.durationExpr) {
+    const { name, value, start, end } = c.durationEdit;
+    const src = doc.originalCode;
+    const at = (v: number) => durationWithConstant(src, c.durationExpr!, doc.fps, name, v);
+    const base = at(value);
+    const step = at(value + 1);
+    if (base != null && step != null && step !== base) {
+      const perUnit = step - base;
+      const next = value + Math.round((want - base) / perUnit);
+      if (next > 0 && at(next) === want) {
+        return { start, end, replacement: String(next) };
+      }
+    }
+  }
+  return { ...c.durationAttrRange, replacement: String(want) };
 }
 
 function pushTrimEdit(
@@ -292,6 +415,144 @@ export function moveClip(doc: EditableDoc, clipId: string, deltaFrames: number):
   return { ...doc, clips, totalDurationInFrames };
 }
 
+/** True when this doc's positions come from a TransitionSeries running total. */
+function isImplicit(doc: EditableDoc): boolean {
+  return doc.clips.some((c) => c.position === "implicit");
+}
+
+/**
+ * Recompute implicit positions from the durations, the way Remotion does:
+ * a running total, less each transition's overlap. Nothing to ripple — changing
+ * one duration re-flows everything after it by definition.
+ */
+function reflowImplicit(doc: EditableDoc): EditableDoc {
+  let run = 0;
+  const clips = doc.clips.map((c) => {
+    // Remotion clamps a negative start to 0 and carries the offset forward
+    // (TransitionSeries.js: `if (actualStartFrame < 0) …`). Mirror it so the
+    // timeline can't draw a clip before frame 0.
+    const start = Math.max(0, run);
+    const nc = { ...c, from: start };
+    run = start + c.durationInFrames - (c.transitionAfter?.durationInFrames ?? 0);
+    return nc;
+  });
+  return {
+    ...doc,
+    clips,
+    totalDurationInFrames: Math.max(0, ...clips.map((c) => c.from + c.durationInFrames), 0),
+  };
+}
+
+/**
+ * The children region of a TransitionSeries, as block texts plus the separators
+ * between them. A separator holds the transition element and its whitespace, so
+ * rebuilding with separators left in place keeps each crossfade attached to the
+ * CUT rather than to whichever clip happens to sit there — which is what makes
+ * reorder and delete preserve the look.
+ */
+function childRegion(code: string, fps: number) {
+  const ts = parseTransitionSeries(code, fps);
+  if (!ts || ts.children.length === 0) return null;
+  const blocks = ts.children.map((c) => code.slice(c.blockStart, c.blockEnd));
+  const seps: string[] = [];
+  for (let i = 0; i < ts.children.length - 1; i++) {
+    seps.push(code.slice(ts.children[i].blockEnd, ts.children[i + 1].blockStart));
+  }
+  return {
+    start: ts.children[0].blockStart,
+    end: ts.children[ts.children.length - 1].blockEnd,
+    blocks,
+    seps,
+  };
+}
+
+/** Splice a rebuilt children region back into the source. */
+function spliceRegion(
+  code: string,
+  region: { start: number; end: number },
+  blocks: string[],
+  seps: string[],
+): string {
+  let body = "";
+  blocks.forEach((b, i) => {
+    body += b;
+    if (i < blocks.length - 1) body += seps[i] ?? "\n";
+  });
+  return code.slice(0, region.start) + body + code.slice(region.end);
+}
+
+/**
+ * Structural edit (reorder / delete) on a TransitionSeries. Duration and trim
+ * edits for the surviving clips are applied first so the block texts we then
+ * move already carry the right numbers; the region is re-read from that patched
+ * source so every offset is fresh.
+ *
+ * `order` lists the surviving clips by their ORIGINAL source index, in the order
+ * they should end up.
+ */
+function emitImplicitStructural(
+  doc: EditableDoc,
+  survivors: EditableClip[],
+  order: number[],
+): string | null {
+  const patched = applyEdits(doc.originalCode, collectClipEdits(doc, survivors));
+  const region = childRegion(patched, doc.fps);
+  if (!region) return null;
+  if (order.some((i) => i < 0 || i >= region.blocks.length)) return null;
+
+  const ts = parseTransitionSeries(patched, doc.fps);
+  if (!ts) return null;
+
+  const blocks = order.map((i) => region.blocks[i]);
+  // On a REORDER the count is unchanged and transitions stay in their positional
+  // slots — a crossfade belongs to the cut, not to whichever clip moved into it.
+  // On a DELETE one cut disappears with the clip, so each surviving pair keeps
+  // the transition that originally followed the earlier of the two.
+  const seps =
+    blocks.length === region.blocks.length
+      ? region.seps.slice(0, Math.max(0, blocks.length - 1))
+      : order.slice(0, -1).map((i) => region.seps[i] ?? "\n");
+  // Remotion refuses a sequence shorter than the transition on either side of
+  // it, so an arrangement that would put a short clip against a long crossfade
+  // has to be rejected rather than emitted — it would throw at render time,
+  // which `evalSceneCode` (module eval only) would not catch.
+  const durations = order.map((i) => ts.children[i].durationInFrames);
+  const sepDurations =
+    blocks.length === region.blocks.length
+      ? ts.children.slice(0, -1).map((c) => c.nextTransition?.durationInFrames ?? 0)
+      : order.slice(0, -1).map((i) => ts.children[i].nextTransition?.durationInFrames ?? 0);
+  for (let j = 0; j < sepDurations.length; j++) {
+    const t = sepDurations[j];
+    if (t > durations[j] || t > durations[j + 1]) return null;
+  }
+
+  const out = spliceRegion(patched, region, blocks, seps);
+  return setDurationExport(out, totalOf(survivors), doc.fps);
+}
+
+/**
+ * The shortest a TransitionSeries child may be. Remotion throws when a sequence
+ * is shorter than the transition on either side of it ("The duration of a
+ * <TransitionSeries.Sequence /> must not be shorter than …"), so a trim has to
+ * stop there rather than produce code that won't render.
+ */
+function minImplicitDuration(doc: EditableDoc, clip: EditableClip): number {
+  const ordered = [...doc.clips].sort(
+    (a, b) => (a.sourceRange?.start ?? 0) - (b.sourceRange?.start ?? 0),
+  );
+  const i = ordered.findIndex((c) => c.id === clip.id);
+  const before = i > 0 ? ordered[i - 1].transitionAfter?.durationInFrames ?? 0 : 0;
+  const after = clip.transitionAfter?.durationInFrames ?? 0;
+  return Math.max(1, before, after);
+}
+
+/** A clip's index in source order — the order the children region is in. */
+function sourceIndex(doc: EditableDoc, clipId: string): number {
+  return [...doc.clips]
+    .sort((a, b) => (a.sourceRange?.start ?? 0) - (b.sourceRange?.start ?? 0))
+    .findIndex((c) => c.id === clipId);
+}
+
 /**
  * Shift every clip that starts after `afterFrom` by `delta`, so a trim or a
  * delete ripples through without disturbing the spacing between clips. Gaps and
@@ -314,7 +575,10 @@ export function trimClipRight(doc: EditableDoc, clipId: string, deltaFrames: num
   const clip = doc.clips.find((c) => c.id === clipId);
   if (!clip) return doc;
 
-  let newDuration = Math.max(1, clip.durationInFrames + deltaFrames);
+  let newDuration = Math.max(
+    clip.position === "implicit" ? minImplicitDuration(doc, clip) : 1,
+    clip.durationInFrames + deltaFrames,
+  );
   // Clamp growth so the clip can't read past the source's last frame (which
   // would render a frozen/black tail). Works whether or not endAt is present:
   // the current source-out is endAt, else startFrom + (duration in source frames).
@@ -339,8 +603,10 @@ export function trimClipRight(doc: EditableDoc, clipId: string, deltaFrames: num
           endAt: c.endAt != null ? c.endAt + compDeltaToSource(c, actualDelta, doc.fps) : c.endAt,
         },
   );
-  // Only the magnetic base track ripples. Shortening a music bed or a caption
-  // must leave the footage exactly where it is.
+  // Implicit positions re-flow from the durations, so there is nothing to
+  // ripple. Otherwise only the magnetic base track ripples — shortening a music
+  // bed or a caption must leave the footage exactly where it is.
+  if (clip.position === "implicit") return reflowImplicit({ ...doc, clips: trimmed });
   const clips =
     clip.track === "base" ? rippleAfter(trimmed, clip.from, actualDelta) : trimmed;
   return {
@@ -368,13 +634,15 @@ export function trimClipLeft(doc: EditableDoc, clipId: string, deltaFrames: numb
   const native = clip.nativeFps && clip.nativeFps > 0 ? clip.nativeFps : doc.fps;
   const startFromBaseComp = Math.floor((startFromBase * doc.fps) / native);
   const maxLeftGrowth = clip.kind === "scene" ? clip.from : Math.min(clip.from, startFromBaseComp);
-  const clamped = Math.max(-maxLeftGrowth, Math.min(clip.durationInFrames - 1, deltaFrames));
+  const minDuration = clip.position === "implicit" ? minImplicitDuration(doc, clip) : 1;
+  const maxShrink = clip.durationInFrames - minDuration;
+  const clamped = Math.max(-maxLeftGrowth, Math.min(maxShrink, deltaFrames));
   if (clamped === 0) return doc;
 
   // On the base track the clip stays anchored and everything after it ripples
   // left. A free-track clip has nothing to ripple, so its own `from` moves
   // instead — either way the clip's right edge stays put.
-  const isBase = clip.track === "base";
+  const isBase = clip.track === "base" || clip.position === "implicit";
   const trimmed = doc.clips.map((c) =>
     c.id !== clipId
       ? c
@@ -388,6 +656,7 @@ export function trimClipLeft(doc: EditableDoc, clipId: string, deltaFrames: numb
               : startFromBase + compDeltaToSource(c, clamped, doc.fps),
         },
   );
+  if (clip.position === "implicit") return reflowImplicit({ ...doc, clips: trimmed });
   const clips = isBase ? rippleAfter(trimmed, clip.from, -clamped) : trimmed;
   return {
     ...doc,
@@ -412,6 +681,8 @@ export function splitClip(
   const localFrame = atFrame - clip.from;
   if (localFrame <= 0 || localFrame >= clip.durationInFrames) return doc;
 
+  if (clip.position === "implicit") return splitTransitionChild(doc, clip, localFrame);
+
   const original = doc.originalCode;
   const headDuration = localFrame;
   const tailFrom = clip.from + localFrame;
@@ -434,7 +705,7 @@ export function splitClip(
       ? { ...c, durationInFrames: headDuration, endAt: headEndAt }
       : c,
   );
-  const patched = applyEdits(original, collectClipEdits(headClips));
+  const patched = applyEdits(original, collectClipEdits(doc, headClips));
 
   // 2. Re-locate the split block by re-parsing (offsets moved). Blocks come back
   // in source order, so index by source position — `doc.clips` may have been
@@ -502,6 +773,78 @@ export function splitClip(
 }
 
 /**
+ * Split a TransitionSeries child in two. The head keeps the original block (and
+ * its slot's constant); the tail is a copy whose duration is written as a plain
+ * literal, since the head still owns the constant. No transition is inserted
+ * between the halves — a split is a hard cut.
+ */
+function splitTransitionChild(
+  doc: EditableDoc,
+  clip: EditableClip,
+  localFrame: number,
+): EditableDoc {
+  const headDuration = localFrame;
+  const tailDuration = clip.durationInFrames - localFrame;
+  const isMedia = clip.kind !== "scene";
+  const cutSourceFrame = (clip.startFrom ?? 0) + compDeltaToSource(clip, localFrame, doc.fps);
+
+  // Head first, so the block we copy already carries the head's numbers.
+  const headClips = doc.clips.map((c) =>
+    c.id !== clip.id
+      ? c
+      : {
+          ...c,
+          durationInFrames: headDuration,
+          endAt: isMedia && c.endAt != null ? cutSourceFrame : c.endAt,
+        },
+  );
+  const patched = applyEdits(doc.originalCode, collectClipEdits(doc, headClips));
+
+  const ts = parseTransitionSeries(patched, doc.fps);
+  const region = childRegion(patched, doc.fps);
+  if (!ts || !region) return doc;
+  const idx = sourceIndex(doc, clip.id);
+  const child = ts.children[idx];
+  if (!child) return doc;
+
+  // Rewrite the copy's attributes at block-relative offsets.
+  const rel = (r: { start: number; end: number }) => ({
+    start: r.start - child.blockStart,
+    end: r.end - child.blockStart,
+  });
+  const tailEdits: Edit[] = [
+    {
+      ...rel({ start: child.durationValueStart, end: child.durationValueEnd }),
+      replacement: String(tailDuration),
+    },
+  ];
+  if (isMedia) {
+    if (child.startFromRange) {
+      tailEdits.push({ ...rel(child.startFromRange), replacement: String(cutSourceFrame) });
+    } else if (child.mediaAttrInsertAt != null) {
+      const at = child.mediaAttrInsertAt - child.blockStart;
+      tailEdits.push({ start: at, end: at, replacement: `startFrom={${cutSourceFrame}} ` });
+    }
+    if (clip.endAt != null && child.endAtRange) {
+      tailEdits.push({ ...rel(child.endAtRange), replacement: String(clip.endAt) });
+    }
+  }
+  const tailText = applyEdits(region.blocks[idx], tailEdits);
+
+  // Indentation of the head block, so the copy lines up.
+  const lineStart = patched.lastIndexOf("\n", child.blockStart - 1) + 1;
+  const indent = patched.slice(lineStart, child.blockStart);
+  const blocks = [...region.blocks];
+  blocks.splice(idx + 1, 0, tailText);
+  const seps = [...region.seps];
+  seps.splice(idx, 0, "\n" + indent);
+
+  const out = spliceRegion(patched, region, blocks, seps);
+  const total = doc.totalDurationInFrames;
+  return docFromCode(setDurationExport(out, total, doc.fps), doc.fps) ?? doc;
+}
+
+/**
  * Ripple delete: remove a clip and close the gap. Deleting from the magnetic
  * BASE track slides everything after it left — including the audio and overlays
  * sitting over that footage, so music and captions keep their sync. Deleting a
@@ -512,6 +855,15 @@ export function rippleDeleteClip(doc: EditableDoc, clipId: string): EditableDoc 
   if (!deleted || !deleted.sourceRange) return doc;
   const shift = deleted.track === "base" ? deleted.durationInFrames : 0;
 
+  if (deleted.position === "implicit") {
+    // Drop the child and the transition in its slot; the rest re-flows.
+    const survivors = doc.clips.filter((c) => c.id !== clipId);
+    const removedIdx = sourceIndex(doc, clipId);
+    const order = survivors.map((c) => sourceIndex(doc, c.id)).filter((i) => i !== removedIdx);
+    const out = emitImplicitStructural(doc, survivors, order);
+    return out ? docFromCode(out, doc.fps) ?? doc : doc;
+  }
+
   const remaining = doc.clips
     .filter((c) => c.id !== clipId)
     .map((c) =>
@@ -521,8 +873,8 @@ export function rippleDeleteClip(doc: EditableDoc, clipId: string): EditableDoc 
     );
 
   const edits: Edit[] = [deleteBlockEdit(doc.originalCode, deleted.sourceRange)];
-  edits.push(...collectClipEdits(remaining));
-  const out = applyEdits(doc.originalCode, edits, totalOf(remaining));
+  edits.push(...collectClipEdits(doc, remaining));
+  const out = applyEdits(doc.originalCode, edits, totalOf(remaining), doc.fps);
   return docFromCode(out, doc.fps) ?? doc;
 }
 
@@ -556,6 +908,14 @@ export function rippleDeleteClips(doc: EditableDoc, ids: string[]): EditableDoc 
       .filter((r) => r.track === "base" && r.from < from)
       .reduce((sum, r) => sum + r.durationInFrames, 0);
 
+  if (isImplicit(doc)) {
+    const survivors = doc.clips.filter((c) => !idSet.has(c.id));
+    if (survivors.length === 0) return doc;
+    const order = survivors.map((c) => sourceIndex(doc, c.id));
+    const out = emitImplicitStructural(doc, survivors, order);
+    return out ? docFromCode(out, doc.fps) ?? doc : doc;
+  }
+
   const kept = doc.clips
     .filter((c) => !idSet.has(c.id))
     .map((c) => ({ ...c, from: Math.max(0, c.from - shiftFor(c.from)) }));
@@ -564,8 +924,8 @@ export function rippleDeleteClips(doc: EditableDoc, ids: string[]): EditableDoc 
   for (const r of removed) {
     if (r.sourceRange) edits.push(deleteBlockEdit(doc.originalCode, r.sourceRange));
   }
-  edits.push(...collectClipEdits(kept));
-  const out = applyEdits(doc.originalCode, edits, totalOf(kept));
+  edits.push(...collectClipEdits(doc, kept));
+  const out = applyEdits(doc.originalCode, edits, totalOf(kept), doc.fps);
   return docFromCode(out, doc.fps) ?? doc;
 }
 
@@ -577,6 +937,19 @@ export function rippleDeleteClips(doc: EditableDoc, ids: string[]): EditableDoc 
 export function reorderClip(doc: EditableDoc, clipId: string, targetIndex: number): EditableDoc {
   const moving = doc.clips.find((c) => c.id === clipId);
   if (!moving || moving.track !== "base") return doc;
+
+  if (moving.position === "implicit") {
+    // Move the child's block; the transitions stay in their slots.
+    const order = [...doc.clips]
+      .sort((a, b) => a.from - b.from)
+      .map((c) => sourceIndex(doc, c.id));
+    const fromPos = order.indexOf(sourceIndex(doc, clipId));
+    if (fromPos === -1) return doc;
+    const [picked] = order.splice(fromPos, 1);
+    order.splice(Math.max(0, Math.min(order.length, targetIndex)), 0, picked);
+    const out = emitImplicitStructural(doc, doc.clips, order);
+    return out ? docFromCode(out, doc.fps) ?? doc : doc;
+  }
 
   const base = doc.clips.filter((c) => c.track === "base").sort((a, b) => a.from - b.from);
   const fromIdx = base.findIndex((c) => c.id === clipId);
@@ -597,6 +970,8 @@ export function reorderClip(doc: EditableDoc, clipId: string, targetIndex: numbe
  * would flatten authored gaps and crossfade overlaps.
  */
 export function repack(doc: EditableDoc): EditableDoc {
+  // Implicit positions are derived, so there is nothing to re-pack.
+  if (isImplicit(doc)) return doc;
   const base = doc.clips.filter((c) => c.track === "base").sort((a, b) => a.from - b.from);
   if (base.length === 0) return doc;
   return relayout(doc, base, slotGaps(base), base[0].from);

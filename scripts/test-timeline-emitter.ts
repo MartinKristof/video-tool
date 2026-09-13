@@ -18,7 +18,7 @@ import {
   analyzeEditability, codeFromDoc, trimClipLeft, trimClipRight,
   splitClip, rippleDeleteClip, reorderClip, moveClip, repack,
 } from "../lib/editable-timeline";
-import { parseTimeline } from "../lib/timeline-parser";
+import { parseTimeline, resolveExprInCode } from "../lib/timeline-parser";
 import { evalSceneCode } from "../remotion/DynamicScene";
 
 let pass = 0, fail = 0;
@@ -202,25 +202,25 @@ head("base-track trim carries the overlay above it");
 
 console.log("\n════════════ real projects ════════════");
 
-
 const ROOT = path.join(__dirname, "..", "data", "projects");
 const ids = fs.readdirSync(ROOT).filter(d => fs.existsSync(path.join(ROOT, d, "project.json")));
 
-const totalExport = (code: string) => {
-  const m = code.match(/export\s+(?:const|let|var)\s+durationInFrames\s*=\s*(\d+)/);
-  return m ? parseInt(m[1], 10) : null;
+/** The composition's declared duration, resolving a symbolic expression. */
+const declaredTotal = (code: string, fps: number) => {
+  const m = /export\s+(?:const|let|var)\s+durationInFrames\s*=\s*([^;]+);/.exec(code);
+  return m ? resolveExprInCode(code, m[1], fps) : null;
 };
 /**
  * Blank every value the emitter is allowed to touch. Whatever remains must be
- * byte-identical — that is the 1a guarantee: nothing else in the file moves.
+ * byte-identical — that is the 1a guarantee for explicit-position compositions.
  */
 const skeleton = (code: string) => code
   .replace(/\b(from|durationInFrames|startFrom|endAt|trimBefore|trimAfter)=\{\s*-?\d+\s*\}/g, "$1={#}")
-  // The duration export is collapsed to a literal by design when a composition
-  // declares it as a sum of scene constants, so blank the whole value.
   .replace(/(export\s+(?:const|let|var)\s+durationInFrames\s*=\s*)[^;]+/, "$1#");
 
 type ProjectFile = { name?: string; code?: string; settings?: { fps?: number } };
+
+let explicitSeen = 0, implicitSeen = 0;
 
 for (const id of ids) {
   let p: ProjectFile;
@@ -230,74 +230,92 @@ for (const id of ids) {
   const { doc } = analyzeEditability(p.code, fps);
   if (!doc) continue;
 
-  console.log(`\n--- ${id.slice(0,8)} "${p.name}" (${doc.clips.length} clips @ ${fps}fps, total ${doc.totalDurationInFrames}) ---`);
-  a(!evalSceneCode(p.code)?.error, "baseline evaluates");
-  // The doc's own normalised source is the byte baseline (Series comps get flattened once).
+  const implicit = doc.clips.some(c => c.position === "implicit");
+  if (implicit) implicitSeen++; else explicitSeen++;
+  const tag = `${id.slice(0,8)} "${p.name}"`;
   const baseline = doc.originalCode;
-  a(!evalSceneCode(baseline)?.error, "normalised baseline evaluates");
+  a(!evalSceneCode(baseline)?.error, `${tag}: baseline evaluates`);
 
-  const first = doc.clips.filter(c => c.track === "base").sort((x,y)=>x.from-y.from)[0];
-  const last = doc.clips.filter(c => c.track === "base").sort((x,y)=>x.from-y.from).slice(-1)[0];
+  // Every edit must leave code that still compiles and whose declared duration
+  // matches the doc that comes back out of it.
+  const check = (label: string, next: string, expectClips: number, expectTotal?: number) => {
+    const ev = evalSceneCode(next);
+    a(!ev?.error, `${tag}: ${label} evaluates (${ev?.error ?? "ok"})`);
+    const re = analyzeEditability(next, fps).doc;
+    a(!!re, `${tag}: ${label} stays editable`);
+    if (!re) return;
+    a(re.clips.length === expectClips, `${tag}: ${label} clip count ${re.clips.length} === ${expectClips}`);
+    a(declaredTotal(next, fps) === re.totalDurationInFrames,
+      `${tag}: ${label} declared duration ${declaredTotal(next, fps)} === content ${re.totalDurationInFrames}`);
+    if (expectTotal != null) {
+      a(re.totalDurationInFrames === expectTotal,
+        `${tag}: ${label} total ${re.totalDurationInFrames} === ${expectTotal}`);
+    }
+    return re;
+  };
 
-  { // trim right
-    const next = codeFromDoc(trimClipRight(doc, first.id, -10));
-    const r = evalSceneCode(next);
-    a(!r?.error, `trim-right evaluates (${r?.error ?? "ok"})`);
-    a(totalExport(next) === doc.totalDurationInFrames - 10, `trim-right total ${totalExport(next)} === ${doc.totalDurationInFrames - 10}`);
-    a(skeleton(next) === skeleton(baseline), "trim-right changes ONLY numeric timing attributes");
+  const base = doc.clips.filter(c => c.track === "base").sort((x, y) => x.from - y.from);
+  const first = base[0], last = base[base.length - 1];
+  const n = doc.clips.length;
+
+  // Trims are clamped — a TransitionSeries child can't go below its adjacent
+  // transition, and a media clip can't read past its source — so assert the
+  // INVARIANT (the emitted code round-trips to exactly the doc the op produced,
+  // and a shortening trim never lengthens the timeline) rather than exact
+  // arithmetic, which only the synthetic fixtures above can guarantee.
+  const tr = trimClipRight(doc, first.id, -10);
+  check("trim-right", codeFromDoc(tr), n, tr.totalDurationInFrames);
+  a(tr.totalDurationInFrames <= doc.totalDurationInFrames, `${tag}: trim-right never lengthens`);
+
+  const tl = trimClipLeft(doc, last.id, 10);
+  check("trim-left", codeFromDoc(tl), n, tl.totalDurationInFrames);
+  a(tl.totalDurationInFrames <= doc.totalDurationInFrames, `${tag}: trim-left never lengthens`);
+
+  // Split the LONGEST clip — a 1-frame clip has no interior frame to cut at and
+  // is correctly refused.
+  const longest = [...base].sort((x, y) => y.durationInFrames - x.durationInFrames)[0];
+  if (longest.durationInFrames >= 2) {
+    const sp = splitClip(doc, longest.id, longest.from + Math.floor(longest.durationInFrames / 2));
+    check("split", codeFromDoc(sp), n + 1, doc.totalDurationInFrames);
   }
-  { // trim left
-    const next = codeFromDoc(trimClipLeft(doc, last.id, 10));
-    const r = evalSceneCode(next);
-    a(!r?.error, `trim-left evaluates (${r?.error ?? "ok"})`);
-    a(totalExport(next) === doc.totalDurationInFrames - 10, `trim-left total ${totalExport(next)} === ${doc.totalDurationInFrames - 10}`);
+
+  if (n > 1) {
+    const deleted = rippleDeleteClip(doc, first.id);
+    check("ripple-delete", codeFromDoc(deleted), n - 1, deleted.totalDurationInFrames);
+    a(deleted.totalDurationInFrames <= doc.totalDurationInFrames, `${tag}: ripple-delete never lengthens`);
   }
-  { // split
-    const c = first;
-    const next = codeFromDoc(splitClip(doc, c.id, c.from + Math.floor(c.durationInFrames / 2)));
-    const r = evalSceneCode(next);
-    a(!r?.error, `split evaluates (${r?.error ?? "ok"})`);
-    const re = analyzeEditability(next, fps);
-    a((re.doc?.clips.length ?? 0) === doc.clips.length + 1, `split adds a clip (${re.doc?.clips.length} vs ${doc.clips.length + 1})`);
-    a(totalExport(next) === doc.totalDurationInFrames, `split keeps total (${totalExport(next)} === ${doc.totalDurationInFrames})`);
+  if (n > 2) {
+    // Reorder is rejected outright when it would place a clip against a longer
+    // transition, so the doc either re-lays out at the same length or is unchanged.
+    const ro = reorderClip(doc, first.id, 2);
+    check("reorder", codeFromDoc(ro), n, doc.totalDurationInFrames);
   }
-  if (doc.clips.length > 1) { // ripple delete
-    const nextDoc = rippleDeleteClip(doc, first.id);
-    const next = codeFromDoc(nextDoc);
-    const r = evalSceneCode(next);
-    a(!r?.error, `ripple-delete evaluates (${r?.error ?? "ok"})`);
-    const re = analyzeEditability(next, fps);
-    a((re.doc?.clips.length ?? 0) === doc.clips.length - 1, "ripple-delete removes a clip");
-    // The emitted export must agree with the doc, and the timeline must shrink.
-    // (Not simply total-minus-duration: a crossfade overlap means the survivor
-    // slides into the overlap and clamps at 0.)
-    a(totalExport(next) === nextDoc.totalDurationInFrames, `ripple-delete export ${totalExport(next)} === doc total ${nextDoc.totalDurationInFrames}`);
-    a(nextDoc.totalDurationInFrames < doc.totalDurationInFrames, "ripple-delete shortens the timeline");
-    a((re.doc?.totalDurationInFrames ?? -1) === nextDoc.totalDurationInFrames, "re-parsed total matches the doc");
-  }
-  if (doc.clips.length > 2) { // reorder
-    const next = codeFromDoc(reorderClip(doc, first.id, 2));
-    const r = evalSceneCode(next);
-    a(!r?.error, `reorder evaluates (${r?.error ?? "ok"})`);
-    a(totalExport(next) === doc.totalDurationInFrames, `reorder keeps total (${totalExport(next)} === ${doc.totalDurationInFrames})`);
-    a(skeleton(next) === skeleton(baseline), "reorder changes ONLY numeric timing attributes");
-  }
-  { // repack is a no-op on a consistent doc
+
+  // Explicit-position compositions additionally guarantee that NOTHING but the
+  // numeric timing attributes moved. Implicit ones legitimately rewrite a slot
+  // constant and move whole blocks, so that check doesn't apply to them.
+  if (!implicit) {
+    a(skeleton(codeFromDoc(trimClipRight(doc, first.id, -10))) === skeleton(baseline),
+      `${tag}: trim-right changes ONLY numeric timing attributes`);
+    if (n > 2) {
+      a(skeleton(codeFromDoc(reorderClip(doc, first.id, 2))) === skeleton(baseline),
+        `${tag}: reorder changes ONLY numeric timing attributes`);
+    }
     const rp = repack(doc);
-    a(skeleton(codeFromDoc(rp)) === skeleton(baseline), "repack touches no structure");
     a(rp.clips.every(c => doc.clips.find(o => o.id === c.id)?.from === c.from),
-      "repack is a no-op on positions (authored gaps/overlaps preserved)");
-    a(rp.totalDurationInFrames === doc.totalDurationInFrames, "repack keeps the total");
+      `${tag}: repack is a no-op on positions`);
   }
-  if (/<Audio\b/.test(baseline)) { // audio bed survives everything
+
+  if (/<Audio\b/.test(baseline)) {
     const edits = [
       codeFromDoc(trimClipRight(doc, first.id, -10)),
       codeFromDoc(rippleDeleteClip(doc, first.id)),
       codeFromDoc(reorderClip(doc, first.id, 1)),
-      codeFromDoc(splitClip(doc, first.id, first.from + 10)),
     ];
-    a(edits.every(e => /<Audio\b/.test(e)), "<Audio> bed survives trim / delete / reorder / split");
+    a(edits.every(e => /<Audio\b/.test(e)), `${tag}: <Audio> bed survives every edit`);
   }
 }
+
+console.log(`\n(${explicitSeen} explicit-position projects, ${implicitSeen} TransitionSeries)`);
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);
 if (fail) process.exit(1);

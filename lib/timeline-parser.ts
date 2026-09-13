@@ -390,6 +390,276 @@ export function normalizeSeriesToSequences(code: string, fps: number): string | 
   return out;
 }
 
+/**
+ * A `<TransitionSeries.Sequence>` child. Unlike a plain `<Sequence>` its
+ * position is IMPLICIT — a running total of the preceding children's durations
+ * minus the transition overlaps — so there is no `from` attribute to patch.
+ * Editing one means changing its duration (or moving/removing the block), and
+ * everything after it re-flows on its own.
+ */
+export interface TransitionChild {
+  index: number;
+  from: number;
+  durationInFrames: number;
+  blockStart: number;
+  blockEnd: number;
+  durationExpr: string;
+  durationValueStart: number;
+  durationValueEnd: number;
+  /**
+   * How this child's duration can be rewritten:
+   *  - "attr"  → overwrite the expression with a literal
+   *  - "const" → patch the declaration of a constant this slot owns, which
+   *              leaves the expression AND any computed duration export intact
+   *  - null    → don't touch it (the expression's constants are used elsewhere)
+   */
+  durationEdit:
+    | { kind: "attr" }
+    | { kind: "const"; name: string; start: number; end: number; value: number }
+    | null;
+  kind: BlockKind;
+  src?: string;
+  label: string;
+  startFrom?: number;
+  endAt?: number;
+  startFromRange: { start: number; end: number } | null;
+  endAtRange: { start: number; end: number } | null;
+  mediaAttrInsertAt?: number;
+  /** The transition that follows this child, i.e. its overlap into the next. */
+  nextTransition: { durationInFrames: number; blockStart: number; blockEnd: number } | null;
+}
+
+export interface TransitionSeriesTimeline {
+  children: TransitionChild[];
+  seriesStart: number;
+  seriesEnd: number;
+  totalDurationInFrames: number;
+}
+
+/** Byte range of an integer constant's VALUE, e.g. the `70` in `const S1 = 70;`. */
+function constValueRange(
+  code: string,
+  name: string,
+): { start: number; end: number; value: number } | null {
+  const re = new RegExp(`(?:const|let|var)\\s+${name}\\s*=\\s*(\\d+)\\s*;`);
+  const m = re.exec(code);
+  if (!m) return null;
+  const valueStart = m.index + m[0].indexOf(m[1], m[0].indexOf("="));
+  return { start: valueStart, end: valueStart + m[1].length, value: parseInt(m[1], 10) };
+}
+
+/**
+ * Decide how a child's `durationInFrames={…}` can be rewritten.
+ *
+ * The generator writes slots as `{S3 + T}`: a per-slot constant plus the shared
+ * transition constant. Patching `S3`'s declaration is the safe move — the
+ * expression keeps its shape and a computed `durationInFrames` export
+ * (`OPEN + S1 + … - T * 12`) stays correct by construction. It is only safe when
+ * that constant belongs to this slot alone, which we check by counting how many
+ * times its name appears in the whole file: its declaration, this attribute, and
+ * at most one mention in the duration export.
+ */
+/**
+ * Is `name` a constant this slot alone controls? Every mention of it must sit
+ * either in its own declaration, in THIS slot's duration attribute, or in the
+ * `durationInFrames` export (which is recomputed from the same constants).
+ *
+ * Counting mentions is not enough: a shared `TRANSITION` used by one slot and
+ * one `<TransitionSeries.Transition>` also totals three, and rewriting it would
+ * silently retime the crossfade as well as the slot.
+ */
+function isSlotOwned(
+  code: string,
+  name: string,
+  attrRange: { start: number; end: number },
+): boolean {
+  const decl = new RegExp(`(?:const|let|var)\\s+${name}\\s*=`).exec(code);
+  const declEnd = decl ? decl.index + decl[0].length : -1;
+  const exportStmt = /export\s+(?:const|let|var)\s+durationInFrames\s*=\s*[^;]+;/.exec(code);
+  for (const m of code.matchAll(new RegExp(`\\b${name}\\b`, "g"))) {
+    const at = m.index;
+    if (decl && at >= decl.index && at < declEnd) continue;
+    if (at >= attrRange.start && at < attrRange.end) continue;
+    if (exportStmt && at >= exportStmt.index && at < exportStmt.index + exportStmt[0].length) continue;
+    return false;
+  }
+  return true;
+}
+
+function planDurationEdit(
+  code: string,
+  expr: string,
+  constants: Record<string, number>,
+  attrRange: { start: number; end: number },
+): TransitionChild["durationEdit"] {
+  if (/^\s*\d+\s*$/.test(expr)) return { kind: "attr" };
+  const names = [...new Set([...expr.matchAll(/\b([A-Za-z_]\w*)\b/g)].map((m) => m[1]))].filter(
+    (n) => n in constants,
+  );
+  if (names.length === 0) return null;
+  const owned = names.filter((n) => isSlotOwned(code, n, attrRange));
+  if (owned.length === 1) {
+    const range = constValueRange(code, owned[0]);
+    if (range) {
+      return { kind: "const", name: owned[0], start: range.start, end: range.end, value: range.value };
+    }
+  }
+  // No single owned constant. Writing a literal over the expression is only safe
+  // when nothing else depends on the constants it is built from.
+  if (names.every((n) => isSlotOwned(code, n, attrRange))) return { kind: "attr" };
+  return null;
+}
+
+/**
+ * Map a `<TransitionSeries>` into positioned children. Positions are derived the
+ * way Remotion derives them: a running total, less each transition's overlap.
+ * The generator is required to keep `timing={linearTiming({ durationInFrames: N })}`
+ * literal for exactly this reason (see lib/prompts/base.ts), so the overlap is
+ * readable without rendering anything.
+ *
+ * Returns null when the series isn't statically mappable — children generated
+ * inside a `.map`, or a duration that won't resolve.
+ */
+/**
+ * Resolve a duration expression with one constant overridden. The emitter uses
+ * this to PROVE that shifting a slot's constant yields the duration it intends,
+ * rather than assuming the constant appears with coefficient 1.
+ */
+export function durationWithConstant(
+  code: string,
+  expr: string,
+  fps: number,
+  name: string,
+  value: number,
+): number | null {
+  return resolveExprInCode(code, expr, fps, { [name]: value });
+}
+
+/** Resolve an expression against the integer constants declared in `code`. */
+export function resolveExprInCode(
+  code: string,
+  expr: string,
+  fps: number,
+  overrides?: Record<string, number>,
+): number | null {
+  const constants: Record<string, number> = { fps };
+  for (const m of code.matchAll(/(?:const|let|var)\s+(\w+)\s*=\s*(\d+)\s*;/g)) {
+    constants[m[1]] = parseInt(m[2], 10);
+  }
+  for (const m of code.matchAll(/(?:const|let|var)\s+(\w+)\s*=\s*([A-Za-z_]\w*)\s*;/g)) {
+    if (!(m[1] in constants) && m[2] in constants) constants[m[1]] = constants[m[2]];
+  }
+  Object.assign(constants, overrides ?? {});
+  return resolveNumericExpr(expr, constants);
+}
+
+export function parseTransitionSeries(
+  code: string,
+  fps: number,
+): TransitionSeriesTimeline | null {
+  const open = /<TransitionSeries\s*>/.exec(code);
+  const closeIdx = code.lastIndexOf("</TransitionSeries>");
+  if (!open || closeIdx < 0 || closeIdx < open.index) return null;
+  const seriesStart = open.index;
+  const seriesEnd = closeIdx + "</TransitionSeries>".length;
+
+  const constants: Record<string, number> = { fps };
+  for (const m of code.matchAll(/(?:const|let|var)\s+(\w+)\s*=\s*(\d+)\s*;/g)) {
+    constants[m[1]] = parseInt(m[2], 10);
+  }
+  const fpsExport = code.match(/export\s+(?:const|let|var)\s+fps\s*=\s*(\d+)/);
+  if (fpsExport) constants.fps = parseInt(fpsExport[1], 10);
+  // `const T = TRANSITION;` — one level of aliasing between integer constants.
+  for (const m of code.matchAll(/(?:const|let|var)\s+(\w+)\s*=\s*([A-Za-z_]\w*)\s*;/g)) {
+    if (!(m[1] in constants) && m[2] in constants) constants[m[1]] = constants[m[2]];
+  }
+
+  // Walk the series body in document order, interleaving children and transitions.
+  const body = code.slice(seriesStart, seriesEnd);
+  const tokenRe =
+    /<TransitionSeries\.Sequence\b([^>]*)>([\s\S]*?)<\/TransitionSeries\.Sequence>|<TransitionSeries\.Transition\b([\s\S]*?)\/>/g;
+
+  const children: TransitionChild[] = [];
+  let token: RegExpExecArray | null;
+
+  while ((token = tokenRe.exec(body)) !== null) {
+    const absStart = seriesStart + token.index;
+    const absEnd = absStart + token[0].length;
+
+    if (token[1] !== undefined) {
+      const attrs = token[1];
+      const durMatch = /\bdurationInFrames\s*=\s*\{/.exec(attrs);
+      if (!durMatch) return null;
+      const attrsStart = absStart + token[0].indexOf(attrs);
+      const range = findAttrValueRange(code, attrsStart, attrsStart + attrs.length, "durationInFrames");
+      if (!range) return null;
+      const resolved = resolveNumericExpr(range.raw, constants);
+      if (resolved === null) return null;
+
+      const openTagEnd = absStart + token[0].indexOf(">") + 1;
+      const media = findMediaTag(code, absStart, absEnd);
+      const sfRange = media
+        ? findAttrValueRange(code, media.tagStart, media.tagEnd, TRIM_BEFORE_ATTR)
+        : null;
+      const eaRange = media
+        ? findAttrValueRange(code, media.tagStart, media.tagEnd, TRIM_AFTER_ATTR)
+        : null;
+      const kind: BlockKind = media ? media.kind : "scene";
+
+      children.push({
+        index: children.length,
+        from: 0, // filled in below
+        durationInFrames: resolved,
+        blockStart: absStart,
+        blockEnd: absEnd,
+        durationExpr: range.raw,
+        durationValueStart: range.start,
+        durationValueEnd: range.end,
+        durationEdit: planDurationEdit(code, range.raw, constants, {
+          start: range.start,
+          end: range.end,
+        }),
+        kind,
+        src: media?.src,
+        label: blockLabel(code, openTagEnd, absEnd, kind, media?.src),
+        startFrom: sfRange ? resolveNumericExpr(sfRange.raw, constants) ?? undefined : undefined,
+        endAt: eaRange ? resolveNumericExpr(eaRange.raw, constants) ?? undefined : undefined,
+        startFromRange: sfRange ? { start: sfRange.start, end: sfRange.end } : null,
+        endAtRange: eaRange ? { start: eaRange.start, end: eaRange.end } : null,
+        mediaAttrInsertAt: media?.insertAt,
+        nextTransition: null,
+      });
+    } else {
+      const timing = /durationInFrames\s*:\s*([^,}]+)/.exec(token[3] ?? "");
+      if (!timing) return null;
+      const dur = resolveNumericExpr(timing[1], constants);
+      if (dur === null) return null;
+      // Attach to the child it follows.
+      const prev = children[children.length - 1];
+      if (prev && !prev.nextTransition) {
+        prev.nextTransition = { durationInFrames: dur, blockStart: absStart, blockEnd: absEnd };
+      }
+    }
+  }
+
+  if (children.length === 0) return null;
+  // A `.map` producing children means the literal blocks we found aren't the
+  // whole story — don't pretend to map it.
+  if (/\.map\s*\(/.test(body)) return null;
+
+  let run = 0;
+  for (const c of children) {
+    c.from = run;
+    run += c.durationInFrames - (c.nextTransition?.durationInFrames ?? 0);
+  }
+  const totalDurationInFrames = Math.max(
+    0,
+    ...children.map((c) => c.from + c.durationInFrames),
+  );
+
+  return { children, seriesStart, seriesEnd, totalDurationInFrames };
+}
+
 export function parseTimeline(code: string, fps: number): TimelineClip[] {
   if (!code || !code.trim()) return [];
 
