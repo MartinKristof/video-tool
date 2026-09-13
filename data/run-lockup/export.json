@@ -1,0 +1,14 @@
+{
+  "file": "/Volumes/T7 Shield/Run_SF_Promo/Graphics/Texts/Animated/RUN-SF_LOCKUP_TC00-00-25-11.mov",
+  "startFrame": 636,
+  "timecode": "00:00:25:11",
+  "durationInFrames": 122,
+  "cues": {
+    "run": "00:00:25:11",
+    "divider": "00:00:25:15",
+    "symbol": "00:00:25:19",
+    "wordmark": "00:00:25:23",
+    "idleStart": "00:00:27:08",
+    "idleEnd": "00:00:28:08"
+  }
+}

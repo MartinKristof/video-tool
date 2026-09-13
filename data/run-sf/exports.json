@@ -1,0 +1,73 @@
+[
+  {
+    "comp": "Line1",
+    "file": "/Volumes/T7 Shield/Run_SF_Promo/Graphics/Texts/Animated/RUN-SF_1_ALL-MY-LEAD-GENERATION-RUN-THERE_TC00-00-00-02.mov",
+    "startFrame": 2,
+    "timecode": "00:00:00:02",
+    "durationInFrames": 65,
+    "words": [
+      "ALL",
+      "MY",
+      "LEAD",
+      "GENERATION",
+      "RUN",
+      "THERE"
+    ]
+  },
+  {
+    "comp": "Line2",
+    "file": "/Volumes/T7 Shield/Run_SF_Promo/Graphics/Texts/Animated/RUN-SF_2_MY-PRICE-MONITOR-RUNS-THERE_TC00-00-03-02.mov",
+    "startFrame": 77,
+    "timecode": "00:00:03:02",
+    "durationInFrames": 58,
+    "words": [
+      "MY",
+      "PRICE",
+      "MONITOR",
+      "RUNS",
+      "THERE"
+    ]
+  },
+  {
+    "comp": "Line3",
+    "file": "/Volumes/T7 Shield/Run_SF_Promo/Graphics/Texts/Animated/RUN-SF_3_MY-AI-AGENTS-RUN-THERE_TC00-00-06-12.mov",
+    "startFrame": 162,
+    "timecode": "00:00:06:12",
+    "durationInFrames": 58,
+    "words": [
+      "MY",
+      "AI",
+      "AGENTS",
+      "RUN",
+      "THERE"
+    ]
+  },
+  {
+    "comp": "Line4",
+    "file": "/Volumes/T7 Shield/Run_SF_Promo/Graphics/Texts/Animated/RUN-SF_4_MY-COMPETITOR-RESEARCH-RUNS-THERE_TC00-00-09-06.mov",
+    "startFrame": 231,
+    "timecode": "00:00:09:06",
+    "durationInFrames": 61,
+    "words": [
+      "MY",
+      "COMPETITOR",
+      "RESEARCH",
+      "RUNS",
+      "THERE"
+    ]
+  },
+  {
+    "comp": "Line5",
+    "file": "/Volumes/T7 Shield/Run_SF_Promo/Graphics/Texts/Animated/RUN-SF_5_MY-COMPANYS-BRAIN-RUNS-THERE_TC00-00-12-05.mov",
+    "startFrame": 305,
+    "timecode": "00:00:12:05",
+    "durationInFrames": 48,
+    "words": [
+      "MY",
+      "COMPANY'S",
+      "BRAIN",
+      "RUNS",
+      "THERE"
+    ]
+  }
+]

@@ -1,0 +1,40 @@
+{
+  "file": "/Volumes/T7 Shield/Run_SF_Promo/Graphics/Texts/Animated/RUN-SF_GET-READY-TO-RUN_TC00-00-22-05.mov",
+  "startFrame": 555,
+  "timecode": "00:00:22:05",
+  "durationInFrames": 56,
+  "words": [
+    {
+      "text": "GET",
+      "in": "00:00:22:05",
+      "inFrame": 0,
+      "outFrame": 32,
+      "goneFrame": 37
+    },
+    {
+      "text": "READY",
+      "in": "00:00:22:08",
+      "inFrame": 3,
+      "outFrame": 37.667,
+      "goneFrame": 42.667
+    },
+    {
+      "text": "TO",
+      "in": "00:00:22:13",
+      "inFrame": 8,
+      "outFrame": 43.333,
+      "goneFrame": 48.333
+    },
+    {
+      "text": "RUN",
+      "in": "00:00:22:16",
+      "inFrame": 11,
+      "outFrame": 49,
+      "goneFrame": 54
+    }
+  ],
+  "clears": {
+    "from": "00:00:23:12",
+    "to": "00:00:24:09"
+  }
+}
