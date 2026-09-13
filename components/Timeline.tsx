@@ -47,6 +47,13 @@ interface TimelineProps {
   resolvedClips?: ResolvedClip[] | null;
   /** True when the hidden runtime extractor is active for this composition. */
   extracting?: boolean;
+  /**
+   * Reports which edit model took the composition. The page uses it to avoid
+   * mounting the runtime extractor — a second, hidden <Player> over the whole
+   * video — for a timeline that is already mapped statically and would never
+   * read its output.
+   */
+  onEditModeChange?: (mode: "doc" | "data" | "segment" | "none") => void;
   currentFrame?: number;
   onSeek?: (frame: number) => void;
   onScrubStart?: () => void;
@@ -148,6 +155,7 @@ export default function Timeline({
   maxSrcFrameBySrc,
   resolvedClips,
   extracting,
+  onEditModeChange,
   currentFrame = 0,
   onSeek,
   onScrubStart,
@@ -202,6 +210,7 @@ export default function Timeline({
   }, [segmentArray, durationInFrames, fps]);
 
   const editMode: EditMode = editableDoc ? "doc" : dataTimeline ? "data" : segmentArray && topicClips ? "segment" : "none";
+  useEffect(() => { onEditModeChange?.(editMode); }, [editMode, onEditModeChange]);
   const isEditable = editMode !== "none";
   // Splitting applies to clip-level modes; topic-level segment mode has no split.
   const canSplit = editMode === "doc" || editMode === "data";

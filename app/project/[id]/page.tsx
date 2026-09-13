@@ -112,6 +112,8 @@ export default function ProjectEditor() {
   // Runtime-extracted clip layout (display-only) for compositions the static
   // parsers can't fully see (TransitionSeries, crossfade/data-driven).
   const [resolvedClips, setResolvedClips] = useState<ResolvedClip[] | null>(null);
+  // Which model the timeline mapped the composition with; gates the extractor.
+  const [timelineMode, setTimelineMode] = useState<"doc" | "data" | "segment" | "none">("none");
   const handleResolved = useCallback((rt: { clips: ResolvedClip[] } | null) => {
     setResolvedClips(rt?.clips ?? null);
   }, []);
@@ -602,7 +604,15 @@ export default function ProjectEditor() {
       project.animationType === "svg");
   // Only run the (browser-side) runtime extractor when the static parsers likely
   // can't see the clips: runtime-computed layouts (TransitionSeries, .map, Series).
-  const needsExtraction = hasTimeline && /(<TransitionSeries\b|\.map\s*\(|<Series\.Sequence\b)/.test(code);
+  //
+  // AND only while the timeline actually has nothing else to draw. The extractor
+  // is a second hidden <Player> rendering the whole composition, so on a long
+  // 4K interview edit it decodes the same footage twice over. Its output feeds
+  // the display-only lane and nothing else — doc, data and segment modes all
+  // position clips statically — so for those it is pure cost.
+  const mayNeedExtraction =
+    hasTimeline && /(<TransitionSeries\b|\.map\s*\(|<Series\.Sequence\b)/.test(code);
+  const needsExtraction = mayNeedExtraction && timelineMode === "none";
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -834,6 +844,7 @@ export default function ProjectEditor() {
                         fps={extractedFps}
                         durationInFrames={durationInFrames}
                         onCodeChange={commitComposition}
+                        onEditModeChange={setTimelineMode}
                         nativeFpsBySrc={nativeFpsBySrc}
                         maxSrcFrameBySrc={maxSrcFrameBySrc}
                         resolvedClips={needsExtraction ? resolvedClips : null}
