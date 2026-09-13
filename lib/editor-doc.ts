@@ -164,6 +164,17 @@ export interface CaptionsItem extends ItemBase {
 export interface SceneItem extends ItemBase {
   type: "scene";
   code: string;
+  /**
+   * Which frame of the embedded composition this item starts at — a trim, for a
+   * scene instead of a file.
+   *
+   * This is what lets a generated composition be split into blocks without
+   * losing anything: each block embeds the WHOLE original and shows only its own
+   * stretch of it, so branded animated title cards keep rendering exactly as they
+   * were authored. Nothing is parsed out of the source; it is windowed, the same
+   * way `trimBefore` windows a video.
+   */
+  sourceOffsetFrames?: number;
 }
 
 export type EditorItem =

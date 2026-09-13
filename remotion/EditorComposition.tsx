@@ -197,9 +197,21 @@ const CaptionsLayer: React.FC<{ item: CaptionsItem }> = ({ item }) => {
 const SceneLayer: React.FC<{ item: SceneItem }> = ({ item }) => {
   const Component = useMemo(() => evalSceneCode(item.code)?.component ?? null, [item.code]);
   if (!Component) return null;
+  const offset = item.sourceOffsetFrames ?? 0;
+  const scene = <Component />;
   return (
     <div style={layoutStyle(item.layout)}>
-      <Component />
+      {offset > 0 ? (
+        // Shift the embedded composition back so this item shows the stretch
+        // starting at `offset` — the same mechanism Remotion uses for trimBefore.
+        // A generated edit can then be split into blocks with its animated cards
+        // still rendering exactly as authored.
+        <Sequence from={-offset} layout="none">
+          {scene}
+        </Sequence>
+      ) : (
+        scene
+      )}
     </div>
   );
 };

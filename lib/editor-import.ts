@@ -1,106 +1,168 @@
-import { parseSegments } from "./data-timeline";
+import { parseDataTimeline, parseSegments } from "./data-timeline";
 import {
   emptyDoc, fullFrameLayout, makeId,
-  type Asset, type DocSize, type EditorDoc, type EditorItem,
+  type Asset, type DocSize, type EditorDoc, type EditorItem, type SceneItem, type VideoItem,
 } from "./editor-doc";
 
+export interface ImportOptions {
+  /** Source file length in seconds, so the timeline can window its filmstrip. */
+  sourceDurationSec?: number;
+  /** The generated composition's own length — needed to derive card spans. */
+  compositionDurationInFrames?: number;
+}
+
+/** The one media file these edits play from. */
+function findSource(code: string): string | null {
+  return /["'`](\/api\/media\/[^"'`]+)["'`]/.exec(code)?.[1] ?? null;
+}
+
 /**
- * Recover an AI interview/tutorial edit into editable items.
+ * A block that keeps rendering the original composition, showing only its own
+ * stretch of it. This is how branded animated title cards survive the import:
+ * the whole generated scene is embedded and windowed, so nothing has to be
+ * parsed out of it and nothing is redrawn by hand.
+ */
+function cardBlock(code: string, size: DocSize, from: number, durationInFrames: number): SceneItem {
+  return {
+    type: "scene",
+    id: makeId("card"),
+    from,
+    durationInFrames: Math.max(1, durationInFrames),
+    layout: fullFrameLayout(size),
+    code,
+    sourceOffsetFrames: from,
+  };
+}
+
+function footageBlock(
+  size: DocSize,
+  assetId: string,
+  from: number,
+  durationInFrames: number,
+  sourceIn: number,
+  sourceOut: number,
+): VideoItem {
+  return {
+    type: "video",
+    id: makeId("video"),
+    from,
+    durationInFrames: Math.max(1, durationInFrames),
+    layout: fullFrameLayout(size),
+    assetId,
+    sourceIn,
+    sourceOut,
+  };
+}
+
+/**
+ * Open a generated interview/tutorial edit as editable blocks, at the positions
+ * the generator gave them.
  *
- * These edits are driven by an array of topics — each with the footage range it
- * plays and the words on its title card — and that array is structured data, not
- * something that has to be parsed out of JSX. So instead of dropping the whole
- * composition in as one immovable block, we can rebuild the AI's DECISIONS as
- * real clips: one footage item per topic, trimmed to the range the AI chose,
- * with its title over the top.
+ * Answers become real video clips — trimmable, extendable, with filmstrips —
+ * because that is what you actually recut. Title and end cards stay as windows
+ * onto the original composition, so they keep their design and animation.
  *
- * This is a recovery, not a reproduction. The branded card design, transitions
- * and audio fades from the generated composition are not recreated — you get the
- * cut, in a form you can actually change. Use `docFromScene` when faithfulness
- * matters more than editability.
+ * The result plays like the original; what changes is that you can now move the
+ * pieces. Returns null when the edit has no structure to recover, in which case
+ * the caller should fall back to embedding it whole (`docFromScene`).
  */
 export function docFromVideoEdit(
   code: string,
   size: DocSize,
-  opts: { titleSeconds?: number; sourceDurationSec?: number } = {},
+  opts: ImportOptions = {},
 ): EditorDoc | null {
-  const segments = parseSegments(code, size.fps);
-  if (!segments || segments.segments.length === 0) return null;
-
-  // These edits play from one source file; take the first media reference.
-  const srcMatch = /["'`](\/api\/media\/[^"'`]+)["'`]/.exec(code);
-  if (!srcMatch) return null;
-  const src = srcMatch[1];
+  const src = findSource(code);
+  if (!src) return null;
 
   const asset: Asset = {
     id: makeId("asset"),
     kind: "video",
     src,
     name: src.split("/").pop() ?? "footage",
-    // Needed for the timeline to window a filmstrip onto the part of the source a
-    // clip is trimmed to; without it clips show no thumbnails.
     durationSec: opts.sourceDurationSec,
   };
 
-  const titleFrames = Math.round((opts.titleSeconds ?? 2) * size.fps);
-  const footage: EditorItem[] = [];
-  const titles: EditorItem[] = [];
-  let cursor = 0;
-
-  for (const seg of segments.segments) {
-    const seconds = Math.max(0, seg.endSec - seg.startSec);
-    const frames = Math.max(1, Math.round(seconds * size.fps));
-    footage.push({
-      type: "video",
-      id: makeId("video"),
-      from: cursor,
-      durationInFrames: frames,
-      layout: fullFrameLayout(size),
-      assetId: asset.id,
-      sourceIn: seg.startSec,
-      sourceOut: seg.endSec,
-    });
-    if (seg.label) {
-      const height = Math.round(size.height * 0.16);
-      titles.push({
-        type: "text",
-        id: makeId("text"),
-        from: cursor,
-        durationInFrames: Math.min(frames, titleFrames),
-        layout: {
-          x: Math.round(size.width * 0.07),
-          y: Math.round(size.height - height - size.height * 0.1),
-          width: Math.round(size.width * 0.86),
-          height,
-        },
-        text: seg.label,
-        style: {
-          fontFamily: "Inter, sans-serif",
-          fontSize: Math.round(size.height * 0.052),
-          fontWeight: 700,
-          color: "#F4F4F5",
-          align: "left",
-        },
-      });
-    }
-    cursor += frames;
-  }
+  const items = buildFromDataTimeline(code, size, asset.id, opts)
+    ?? buildFromSegments(code, size, asset.id, opts);
+  if (!items || items.length === 0) return null;
 
   const base = emptyDoc(size);
   return {
     ...base,
     assets: [asset],
-    tracks: [
-      { id: makeId("track"), name: "Footage", items: footage },
-      { id: makeId("track"), name: "Titles", items: titles },
-    ],
+    tracks: [{ id: makeId("track"), name: "Edit", items }],
   };
+}
+
+/**
+ * Preferred path: the driving array labels each element (card / answer / end)
+ * and the model computes where each one sits, so every block can be placed at
+ * its original position and given the right treatment.
+ */
+function buildFromDataTimeline(
+  code: string,
+  size: DocSize,
+  assetId: string,
+  opts: ImportOptions,
+): EditorItem[] | null {
+  const dt = parseDataTimeline(code, size.fps, opts.compositionDurationInFrames ?? 0);
+  if (!dt) return null;
+  const answers = dt.clips.filter((c) => c.kind === "answer" && c.startSec != null && c.endSec != null);
+  if (answers.length === 0) return null;
+
+  return dt.clips.map((clip) =>
+    clip.kind === "answer" && clip.startSec != null && clip.endSec != null
+      ? footageBlock(size, assetId, clip.from, clip.durationInFrames, clip.startSec, clip.endSec)
+      : cardBlock(code, size, clip.from, clip.durationInFrames),
+  );
+}
+
+/**
+ * Fallback: the array holds only the topics, and the cards between them are
+ * generated by the composition's own loop. Their length is whatever is left over
+ * once the answers are accounted for — the same arithmetic the existing topic
+ * timeline uses — which is enough to window each card out of the original.
+ */
+function buildFromSegments(
+  code: string,
+  size: DocSize,
+  assetId: string,
+  opts: ImportOptions,
+): EditorItem[] | null {
+  const sa = parseSegments(code, size.fps);
+  if (!sa || sa.segments.length === 0) return null;
+
+  const answerFrames = sa.segments.map((s) =>
+    Math.max(1, Math.round((s.endSec - s.startSec) * size.fps)),
+  );
+  const total = opts.compositionDurationInFrames ?? 0;
+  const leftover = total - answerFrames.reduce((a, b) => a + b, 0);
+  const n = sa.segments.length;
+  const hasCards = total > 0 && leftover >= n;
+  // Spread the remainder over the first few cards rather than rounding each one,
+  // so the blocks add up to the original composition exactly. A couple of frames
+  // of drift would push every later card off the frame it is windowed onto.
+  const baseCard = hasCards ? Math.floor(leftover / n) : 0;
+  const extra = hasCards ? leftover % n : 0;
+
+  const items: EditorItem[] = [];
+  let cursor = 0;
+  sa.segments.forEach((seg, i) => {
+    const cardFrames = baseCard + (i < extra ? 1 : 0);
+    if (cardFrames > 0) {
+      items.push(cardBlock(code, size, cursor, cardFrames));
+      cursor += cardFrames;
+    }
+    items.push(footageBlock(size, assetId, cursor, answerFrames[i], seg.startSec, seg.endSec));
+    cursor += answerFrames[i];
+  });
+  return items;
 }
 
 /**
  * Topics whose footage range is implausibly short. The generator occasionally
  * writes a range like 125.1 → 125.2, which renders as a few frames — invisible
- * in the finished video and easy to miss until you see the clips laid out.
+ * in the finished video and easy to miss until you see the blocks laid out.
  */
 export function suspiciousSegments(
   code: string,

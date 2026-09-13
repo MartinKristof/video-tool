@@ -896,7 +896,10 @@ export default function ProjectEditor() {
               // structured data — which footage, named how — so rebuild those as
               // real clips rather than dropping the whole thing in as one
               // immovable block. Falls back to the block for everything else.
-              const imported = docFromVideoEdit(code, size, { sourceDurationSec });
+              const imported = docFromVideoEdit(code, size, {
+                sourceDurationSec,
+                compositionDurationInFrames: evaluated?.durationInFrames,
+              });
               if (imported) {
                 commitDoc(imported);
                 const odd = suspiciousSegments(code, size.fps);

@@ -30,6 +30,18 @@ export default function S() {
 }
 `;
 
+// A scene that changes over time, so windowing it can be proved rather than
+// assumed: green for its first second, magenta for its second.
+const TWO_PART_SCENE = `import React from "react";
+import { AbsoluteFill, useCurrentFrame } from "remotion";
+export const fps = 30;
+export const durationInFrames = 60;
+export default function S() {
+  const frame = useCurrentFrame();
+  return <AbsoluteFill style={{ backgroundColor: frame < 30 ? "#00cc00" : "#cc00cc" }} />;
+}
+`;
+
 function fixture(): EditorDoc {
   let doc = emptyDoc(SIZE);
   const bg = doc.tracks[0].id;
@@ -118,6 +130,41 @@ registerRoot(Root);
     }
     a(!capShots.capA.equals(capShots.capB), "caption pages change as words are spoken");
     a(!capShots.capA.equals(shots.scene), "captions paint over the scene item beneath them");
+
+    // Windowed scene items: the mechanism that lets a generated edit be split
+    // into blocks while its animated title cards keep rendering as authored.
+    const windowDoc = (() => {
+      let d = emptyDoc(SIZE);
+      const t = d.tracks[0].id;
+      d = addItem(d, t, { type: "scene", id: "early", from: 0, durationInFrames: 20, layout: { ...full }, code: TWO_PART_SCENE, sourceOffsetFrames: 0 } as SceneItem);
+      d = addItem(d, t, { type: "scene", id: "late", from: 20, durationInFrames: 20, layout: { ...full }, code: TWO_PART_SCENE, sourceOffsetFrames: 40 } as SceneItem);
+      return d;
+    })();
+    const windowEntry = path.join(scenesDir, `_editordoc_window_${Date.now().toString(36)}.tsx`);
+    fs.writeFileSync(windowEntry, `import React from "react";
+import { Composition, registerRoot } from "remotion";
+import { EditorComposition } from "../EditorComposition";
+const doc = ${JSON.stringify(windowDoc)} as never;
+registerRoot(() => (
+  <Composition id="Scene" component={EditorComposition as never} durationInFrames={40}
+    fps={${SIZE.fps}} width={${SIZE.width}} height={${SIZE.height}} defaultProps={{ doc }} />
+));
+`, "utf-8");
+    try {
+      const serve2 = await bundle({ entryPoint: windowEntry, publicDir: path.join(process.cwd(), "public") });
+      const comp2 = await selectComposition({ serveUrl: serve2, id: "Scene" });
+      const w: Record<string, Buffer> = {};
+      for (const [label, frame] of [["unwindowed", 5], ["windowed", 25]] as const) {
+        const out = path.join(tmp, `win_${label}.png`);
+        await renderStill({ composition: comp2, serveUrl: serve2, output: out, frame, imageFormat: "png" });
+        w[label] = fs.readFileSync(out);
+      }
+      // Block one shows the scene's own frame 5 (green); block two is offset 40
+      // frames in, so it shows magenta at the same point in its own timeline.
+      a(!w.unwindowed.equals(w.windowed), "a windowed scene item shows a DIFFERENT part of the same composition");
+    } finally {
+      try { fs.unlinkSync(windowEntry); } catch {}
+    }
 
     // The same frame must render identically twice: the render is deterministic,
     // which is what makes preview-vs-export parity meaningful.
