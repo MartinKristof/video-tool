@@ -3,10 +3,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Icon from "@/components/ui/Icon";
 import { snapFrame } from "@/lib/editable-timeline";
+import type { AnimationPreset } from "@/lib/editor-effects";
 import {
   addItem, addTrack, cloneItem, docDuration, duplicateItem, findItem, getAsset,
   makeId, moveItem, moveItemToTrack, removeItem, removeTrack, rippleRemoveItem,
-  snapTargets, splitItem, trimItem,
+  snapTargets, splitItem, trimItem, updateItem,
   type Asset, type EditorDoc, type EditorItem, type Track,
 } from "@/lib/editor-doc";
 
@@ -142,6 +143,7 @@ export default function DocTimeline({
   }, [pxPerFrame, total]);
 
   const startScrub = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
     onScrubStart?.();
     onSeek?.(frameFromClientX(e.clientX));
     const move = (ev: PointerEvent) => onSeek?.(frameFromClientX(ev.clientX));
@@ -300,7 +302,7 @@ export default function DocTimeline({
   }, [maxZoom]);
 
   /** Add a media file to a track at the playhead, registering its asset once. */
-  const insertMedia = useCallback((file: MediaFile, trackId: string) => {
+  const insertMedia = useCallback((file: MediaFile, trackId: string, atFrame?: number) => {
     const src = `/api/media/${projectId}/${file.path}`;
     const existing = doc.assets.find((a) => a.src === src);
     const kind: Asset["kind"] = file.type === "audio" ? "audio" : file.type === "image" ? "image" : "video";
@@ -312,7 +314,7 @@ export default function DocTimeline({
     const item = {
       type: kind === "audio" ? "audio" : kind === "image" ? "image" : "video",
       id: makeId(kind),
-      from: currentFrame,
+      from: atFrame ?? currentFrame,
       durationInFrames: frames,
       layout: { x: 0, y: 0, width: doc.size.width, height: doc.size.height },
       assetId: asset.id,
@@ -562,15 +564,26 @@ export default function DocTimeline({
           outlineOffset: -2,
         }}
         onPointerDown={deselect}
-        onDragOver={(e) => { e.preventDefault(); setDropping(laneIndex); }}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes("application/x-vt-effect")) return;
+          e.preventDefault();
+          setDropping(laneIndex);
+        }}
         onDragLeave={() => setDropping((d) => (d === laneIndex ? null : d))}
         onDrop={(e) => {
           e.preventDefault();
           setDropping(null);
-          const files = Array.from(e.dataTransfer?.files ?? []);
-          if (files.length === 0) return;
           const rect = e.currentTarget.getBoundingClientRect();
           const frame = Math.max(0, Math.round((e.clientX - rect.left) / pxPerFrame));
+
+          // A tile dragged out of the footage browser is already uploaded.
+          const tile = e.dataTransfer?.getData("application/x-vt-media");
+          if (tile) {
+            try { insertMedia(JSON.parse(tile) as MediaFile, track.id, frame); } catch {}
+            return;
+          }
+          const files = Array.from(e.dataTransfer?.files ?? []);
+          if (files.length === 0) return;
           void handleDrop(files, track.id, frame);
         }}
       >
@@ -611,6 +624,24 @@ export default function DocTimeline({
             <div
               key={item.id}
               onPointerDown={(e) => beginDrag(e, item, "move")}
+              onDragOver={(e) => {
+                if (e.dataTransfer.types.includes("application/x-vt-effect")) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }
+              }}
+              onDrop={(e) => {
+                const preset = e.dataTransfer.getData("application/x-vt-effect") as AnimationPreset;
+                if (!preset) return;
+                e.preventDefault();
+                e.stopPropagation();
+                // Dropping on the left half sets the entrance, the right half the exit.
+                const rect = e.currentTarget.getBoundingClientRect();
+                const edge = e.clientX - rect.left < rect.width / 2 ? "animateIn" : "animateOut";
+                const spec = preset === "none" ? undefined : { preset, durationInFrames: Math.min(12, item.durationInFrames) };
+                commit(updateItem(doc, item.id, { [edge]: spec }));
+                onSelectionChange(new Set([item.id]));
+              }}
               style={{
                 position: "absolute", left: g.from * pxPerFrame, width: clipW,
                 top: 4, height: TRACK_H - 9, borderRadius: 3, cursor: "grab",
@@ -672,7 +703,17 @@ export default function DocTimeline({
   );
 
   return (
-    <div ref={wrapRef} style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--bg-1)", minHeight: 0 }}>
+    // `user-select: none` matters here: the ruler's tick labels are ordinary
+    // text, so dragging the playhead across them selected them — and since
+    // globals.css paints ::selection with the accent colour, that read as the
+    // timeline lighting up green rather than as a stray selection.
+    <div
+      ref={wrapRef}
+      style={{
+        display: "flex", flexDirection: "column", height: "100%",
+        background: "var(--bg-1)", minHeight: 0, userSelect: "none",
+      }}
+    >
       {/* toolbar */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderBottom: "0.5px solid var(--line-1)" }}>
         <span className="mono cap" style={{ fontSize: 9, color: "var(--text-3)" }}>Editor</span>

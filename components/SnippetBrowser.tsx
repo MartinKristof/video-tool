@@ -20,7 +20,12 @@ interface SnippetBrowserProps {
   open: boolean;
   onClose: () => void;
   hasExistingCode: boolean;
-  onUseSnippet: (code: string) => void;
+  /**
+   * `provenance` carries the snippet id and the values it was rendered from, so
+   * a visual-editor block can reopen this form later. Ignored by the code editor,
+   * which only ever replaces the whole project.
+   */
+  onUseSnippet: (code: string, provenance?: { id: string; values: Record<string, unknown> }) => void;
 }
 
 // Every preview accent is orange — the brand is orange-only. Icons still vary
@@ -52,6 +57,7 @@ export default function SnippetBrowser({
 }: SnippetBrowserProps) {
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [pendingProvenance, setPendingProvenance] = useState<{ id: string; values: Record<string, unknown> } | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   // Two-step flow: gallery (selectedId === null) → params form (selectedId set).
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -102,25 +108,26 @@ export default function SnippetBrowser({
     setSelectedId(snippet.id);
   }
 
-  function applyCode(code: string) {
+  function applyCode(code: string, provenance?: { id: string; values: Record<string, unknown> }) {
     if (hasExistingCode) {
       setPendingCode(code);
+      setPendingProvenance(provenance);
       setConfirmId("__pending__");
       return;
     }
-    onUseSnippet(code);
+    onUseSnippet(code, provenance);
     onClose();
   }
 
   function handleInsert(values: Record<string, unknown>) {
     if (!selectedSnippet || !selectedSchema) return;
     const rendered = renderSnippet(selectedSnippet.code, selectedSchema, values);
-    applyCode(rendered);
+    applyCode(rendered, { id: selectedSnippet.id, values });
   }
 
   function confirmReplace() {
     if (pendingCode) {
-      onUseSnippet(pendingCode);
+      onUseSnippet(pendingCode, pendingProvenance);
     }
     setPendingCode(null);
     setConfirmId(null);

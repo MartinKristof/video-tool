@@ -1,11 +1,13 @@
 "use client";
 
 import React from "react";
+import ScrubNumber from "@/components/ui/ScrubNumber";
 import {
   findItem, hasSource, setLayout, updateItem,
   type AudioItem, type CaptionsItem, type EditorDoc, type EditorItem, type SolidItem,
   type TextItem, type VideoItem,
 } from "@/lib/editor-doc";
+import { presetsFor } from "@/lib/editor-effects";
 
 /**
  * Properties of the selected item. Everything here writes through the same pure
@@ -14,34 +16,57 @@ import {
  */
 
 const row: React.CSSProperties = { display: "flex", alignItems: "center", gap: 6, marginBottom: 6 };
-const label: React.CSSProperties = { fontSize: 9, color: "var(--text-3)", width: 58, flexShrink: 0, textTransform: "uppercase", letterSpacing: "0.04em" };
+const label: React.CSSProperties = { fontSize: 10, color: "var(--text-2)", width: 92, flexShrink: 0 };
 const input: React.CSSProperties = {
   background: "var(--bg-3)", border: "0.5px solid var(--line-2)", borderRadius: 3,
   color: "var(--text-0)", fontSize: 11, padding: "3px 6px", width: "100%", minWidth: 0,
 };
 
-function NumberField({ value, onCommit, step = 1 }: { value: number; onCommit: (n: number) => void; step?: number }) {
+/** Thin wrapper so every field in this panel scrubs and types the same way. */
+function NumberField({
+  value, onCommit, step = 1, min, max, precision = 0, suffix,
+}: {
+  value: number;
+  onCommit: (n: number) => void;
+  step?: number;
+  min?: number;
+  max?: number;
+  precision?: number;
+  suffix?: string;
+}) {
   return (
-    <input
-      type="number"
-      className="nums"
+    <ScrubNumber
+      value={Number.isFinite(value) ? value : 0}
+      onChange={onCommit}
       step={step}
-      value={Number.isFinite(value) ? Math.round(value * 100) / 100 : 0}
-      onChange={(e) => {
-        const n = parseFloat(e.target.value);
-        if (Number.isFinite(n)) onCommit(n);
-      }}
-      style={input}
+      min={min}
+      max={max}
+      precision={precision}
+      suffix={suffix}
     />
   );
 }
 
+/** A labelled group, so the panel reads as sections rather than a wall of rows. */
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 9, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export default function EditorInspector({
-  doc, selectedIds, onChange,
+  doc, selectedIds, onChange, onEditSnippet,
 }: {
   doc: EditorDoc;
   selectedIds: Set<string>;
   onChange: (next: EditorDoc) => void;
+  /** Opens the snippet's parameter form, for blocks that came from the library. */
+  onEditSnippet?: (itemId: string) => void;
 }) {
   const id = selectedIds.size === 1 ? [...selectedIds][0] : null;
   const found = id ? findItem(doc, id) : null;
@@ -66,45 +91,78 @@ export default function EditorInspector({
         {item.type} · {item.durationInFrames}f @ {item.from}
       </div>
 
-      <div style={row}>
-        <span style={label}>X / Y</span>
-        <NumberField value={l.x} onCommit={(n) => patchLayout({ x: n })} />
-        <NumberField value={l.y} onCommit={(n) => patchLayout({ y: n })} />
-      </div>
-      <div style={row}>
-        <span style={label}>W / H</span>
-        <NumberField value={l.width} onCommit={(n) => patchLayout({ width: Math.max(8, n) })} />
-        <NumberField value={l.height} onCommit={(n) => patchLayout({ height: Math.max(8, n) })} />
-      </div>
-      <div style={row}>
-        <span style={label}>Rotate</span>
-        <NumberField value={l.rotation ?? 0} onCommit={(n) => patchLayout({ rotation: n })} />
-        <button onClick={() => patchLayout({ rotation: ((l.rotation ?? 0) + 90) % 360 })} style={{ ...input, width: 34, cursor: "pointer" }}>90°</button>
-      </div>
-      <div style={row}>
-        <span style={label}>Opacity</span>
-        <input
-          type="range" min={0} max={1} step={0.01}
-          value={l.opacity ?? 1}
-          onChange={(e) => patchLayout({ opacity: parseFloat(e.target.value) })}
-          style={{ width: "100%" }}
-        />
-      </div>
-      <div style={row}>
-        <span style={label}>Radius</span>
-        <NumberField value={l.cornerRadius ?? 0} onCommit={(n) => patchLayout({ cornerRadius: Math.max(0, n) })} />
-      </div>
+      <Section title="Transform">
+        <div style={row}>
+          <span style={label}>Position</span>
+          <NumberField value={l.x} onCommit={(n) => patchLayout({ x: n })} />
+          <NumberField value={l.y} onCommit={(n) => patchLayout({ y: n })} />
+        </div>
+        <div style={row}>
+          <span style={label}>Size</span>
+          <NumberField value={l.width} onCommit={(n) => patchLayout({ width: Math.max(8, n) })} />
+          <NumberField value={l.height} onCommit={(n) => patchLayout({ height: Math.max(8, n) })} />
+        </div>
+        <div style={row}>
+          <span style={label}>Scale</span>
+          <NumberField
+            value={Math.round((l.width / doc.size.width) * 100)}
+            suffix="%"
+            min={1}
+            onCommit={(pct) => {
+              // Scale about the centre, so resizing doesn't shove the item across
+              // the frame — which is what makes a percentage field usable at all.
+              const ratio = l.height / l.width;
+              const width = Math.max(8, Math.round((pct / 100) * doc.size.width));
+              const height = Math.max(8, Math.round(width * ratio));
+              patchLayout({
+                width,
+                height,
+                x: Math.round(l.x + (l.width - width) / 2),
+                y: Math.round(l.y + (l.height - height) / 2),
+              });
+            }}
+          />
+          <span style={{ flex: 1 }} />
+        </div>
+        <div style={row}>
+          <span style={label}>Rotation</span>
+          <NumberField value={l.rotation ?? 0} suffix="°" onCommit={(n) => patchLayout({ rotation: n })} />
+          <button onClick={() => patchLayout({ rotation: ((l.rotation ?? 0) + 90) % 360 })} style={{ ...input, width: 40, cursor: "pointer" }}>+90°</button>
+        </div>
+        <div style={row}>
+          <span style={label}>Opacity</span>
+          <NumberField
+            value={Math.round((l.opacity ?? 1) * 100)}
+            suffix="%"
+            min={0}
+            max={100}
+            onCommit={(n) => patchLayout({ opacity: n / 100 })}
+          />
+          <span style={{ flex: 1 }} />
+        </div>
+        <div style={row}>
+          <span style={label}>Corner radius</span>
+          <NumberField value={l.cornerRadius ?? 0} min={0} onCommit={(n) => patchLayout({ cornerRadius: n })} />
+          <span style={{ flex: 1 }} />
+        </div>
 
-      <div style={{ display: "flex", gap: 4, marginTop: 8, marginBottom: 10 }}>
-        <button style={{ ...input, cursor: "pointer" }} onClick={() => patchLayout({ x: Math.round((doc.size.width - l.width) / 2) })}>Centre H</button>
-        <button style={{ ...input, cursor: "pointer" }} onClick={() => patchLayout({ y: Math.round((doc.size.height - l.height) / 2) })}>Centre V</button>
-        <button style={{ ...input, cursor: "pointer" }} onClick={() => patchLayout({ x: 0, y: 0, width: doc.size.width, height: doc.size.height })}>Fill</button>
-      </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
+          <button style={{ ...input, cursor: "pointer" }} onClick={() => patchLayout({ x: Math.round((doc.size.width - l.width) / 2) })}>
+            Center horizontally
+          </button>
+          <button style={{ ...input, cursor: "pointer" }} onClick={() => patchLayout({ y: Math.round((doc.size.height - l.height) / 2) })}>
+            Center vertically
+          </button>
+          <button style={{ ...input, cursor: "pointer" }} onClick={() => patchLayout({ x: 0, y: 0, width: doc.size.width, height: doc.size.height })}>
+            Fill the frame
+          </button>
+        </div>
+      </Section>
 
       {item.type === "text" && (
-        <>
+        <Section title="Text">
           <div style={{ ...row, alignItems: "flex-start" }}>
-            <span style={label}>Text</span>
+            <span style={label}>Content</span>
             <textarea
               value={(item as TextItem).text}
               onChange={(e) => onChange(updateItem<TextItem>(doc, item.id, { text: e.target.value }))}
@@ -113,14 +171,16 @@ export default function EditorInspector({
             />
           </div>
           <div style={row}>
-            <span style={label}>Size</span>
+            <span style={label}>Font size</span>
             <NumberField
               value={(item as TextItem).style.fontSize}
+              min={4}
               onCommit={(n) => onChange(updateItem<TextItem>(doc, item.id, { style: { ...(item as TextItem).style, fontSize: Math.max(4, n) } }))}
             />
+            <span style={{ flex: 1 }} />
           </div>
           <div style={row}>
-            <span style={label}>Colour</span>
+            <span style={label}>Color</span>
             <input
               type="color"
               value={(item as TextItem).style.color}
@@ -129,21 +189,21 @@ export default function EditorInspector({
             />
           </div>
           <div style={row}>
-            <span style={label}>Align</span>
+            <span style={label}>Alignment</span>
             {(["left", "center", "right"] as const).map((al) => (
               <button
                 key={al}
                 onClick={() => onChange(updateItem<TextItem>(doc, item.id, { style: { ...(item as TextItem).style, align: al } }))}
                 style={{
                   ...input, cursor: "pointer",
-                  color: (item as TextItem).style.align === al ? "var(--accent)" : "var(--text-1)",
+                  color: ((item as TextItem).style.align ?? "left") === al ? "var(--accent)" : "var(--text-1)",
                 }}
               >
-                {al[0].toUpperCase()}
+                {al === "left" ? "Left" : al === "center" ? "Center" : "Right"}
               </button>
             ))}
           </div>
-        </>
+        </Section>
       )}
 
       {hasSource(item) && (
@@ -161,7 +221,7 @@ export default function EditorInspector({
             />
           </div>
           <div style={row}>
-            <span style={label}>Fade in</span>
+            <span style={label}>Fade in / out</span>
             <NumberField
               value={(item as VideoItem).fadeInFrames ?? 0}
               onCommit={(n) => onChange(updateItem<AudioItem>(doc, item.id, { fadeInFrames: Math.max(0, Math.round(n)) }))}
@@ -173,7 +233,7 @@ export default function EditorInspector({
             />
           </div>
           <div style={row}>
-            <span style={label}>Speed</span>
+            <span style={label}>Playback speed</span>
             <NumberField
               step={0.05}
               value={(item as VideoItem).playbackRate ?? 1}
@@ -192,14 +252,14 @@ export default function EditorInspector({
             {(item as CaptionsItem).tokens.length} words transcribed
           </div>
           <div style={row}>
-            <span style={label}>Size</span>
+            <span style={label}>Font size</span>
             <NumberField
               value={(item as CaptionsItem).style.fontSize}
               onCommit={(n) => onChange(updateItem<CaptionsItem>(doc, item.id, { style: { ...(item as CaptionsItem).style, fontSize: Math.max(4, n) } }))}
             />
           </div>
           <div style={row}>
-            <span style={label}>Colour</span>
+            <span style={label}>Color</span>
             <input
               type="color"
               value={(item as CaptionsItem).style.color}
@@ -208,7 +268,7 @@ export default function EditorInspector({
             />
           </div>
           <div style={row}>
-            <span style={label}>Spoken</span>
+            <span style={label}>Spoken word</span>
             <input
               type="color"
               title="Colour of the word being spoken"
@@ -218,7 +278,7 @@ export default function EditorInspector({
             />
           </div>
           <div style={row}>
-            <span style={label}>Page ms</span>
+            <span style={label}>Page duration</span>
             <NumberField
               step={100}
               value={(item as CaptionsItem).pageDurationMs ?? 1200}
@@ -226,7 +286,7 @@ export default function EditorInspector({
             />
           </div>
           <div style={row}>
-            <span style={label}>Max words</span>
+            <span style={label}>Words per page</span>
             <NumberField
               value={(item as CaptionsItem).maxWordsPerPage ?? 6}
               onCommit={(n) => onChange(updateItem<CaptionsItem>(doc, item.id, { maxWordsPerPage: Math.max(1, Math.round(n)) }))}
@@ -235,9 +295,53 @@ export default function EditorInspector({
         </>
       )}
 
+      {item.type === "scene" && "snippet" in item && item.snippet && onEditSnippet && (
+        <Section title="Snippet">
+          <button style={{ ...input, cursor: "pointer" }} onClick={() => onEditSnippet(item.id)}>
+            Edit {item.snippet.id} texts…
+          </button>
+        </Section>
+      )}
+
+      <Section title="Effects">
+        {(["animateIn", "animateOut"] as const).map((edge) => {
+          const spec = item[edge];
+          return (
+            <div key={edge} style={row}>
+              <span style={label}>{edge === "animateIn" ? "Arrives" : "Leaves"}</span>
+              <select
+                value={spec?.preset ?? "none"}
+                onChange={(e) => {
+                  const preset = e.target.value as NonNullable<typeof spec>["preset"];
+                  onChange(updateItem(doc, item.id, {
+                    [edge]: preset === "none"
+                      ? undefined
+                      : { preset, durationInFrames: spec?.durationInFrames ?? 12 },
+                  }));
+                }}
+                style={{ ...input, cursor: "pointer" }}
+              >
+                {presetsFor(item.type).map((p) => (
+                  <option key={p.id} value={p.id}>{p.label}</option>
+                ))}
+              </select>
+              <NumberField
+                value={spec?.durationInFrames ?? 12}
+                min={1}
+                suffix="f"
+                onCommit={(n) => {
+                  if (!spec) return;
+                  onChange(updateItem(doc, item.id, { [edge]: { ...spec, durationInFrames: Math.max(1, Math.round(n)) } }));
+                }}
+              />
+            </div>
+          );
+        })}
+      </Section>
+
       {item.type === "solid" && (
         <div style={row}>
-          <span style={label}>Colour</span>
+          <span style={label}>Color</span>
           <input
             type="color"
             value={(item as SolidItem).color}

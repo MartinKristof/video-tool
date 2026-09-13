@@ -23,6 +23,8 @@
  * trim, and removes a whole class of source-vs-composition frame confusion.
  */
 
+import type { AnimationSpec } from "./editor-effects";
+
 export const EDITOR_DOC_VERSION = 1;
 
 export interface DocSize {
@@ -68,6 +70,12 @@ interface ItemBase {
   from: number;
   durationInFrames: number;
   layout: ItemLayout;
+  /**
+   * How the item arrives and leaves. Available on every visual layer, so an
+   * image or a snippet block animates the same way a title does.
+   */
+  animateIn?: AnimationSpec;
+  animateOut?: AnimationSpec;
 }
 
 /** Fields shared by anything with a soundtrack or a source file to trim. */
@@ -164,6 +172,13 @@ export interface CaptionsItem extends ItemBase {
 export interface SceneItem extends ItemBase {
   type: "scene";
   code: string;
+  /**
+   * Where this block came from, when it was inserted from the snippet library.
+   * Kept so the parameter form can be reopened and its texts changed — the
+   * substitution in lib/snippet-template.ts only runs one way, so the values
+   * cannot be recovered from the rendered code reliably.
+   */
+  snippet?: { id: string; values: Record<string, unknown> };
   /**
    * Which frame of the embedded composition this item starts at — a trim, for a
    * scene instead of a file.

@@ -1,6 +1,8 @@
 import React, { useMemo } from "react";
 import { AbsoluteFill, Audio, Img, OffthreadVideo, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import { evalSceneCode } from "./DynamicScene";
+import { springIn } from "./motion";
+import { presetStyle, visibleCharacters, wordProgress } from "../lib/editor-effects";
 import {
   captionPageAt,
   docDuration,
@@ -142,11 +144,63 @@ const ImageLayer: React.FC<{ item: ImageItem | GifItem; asset?: Asset }> = ({ it
   );
 };
 
-const TextLayer: React.FC<{ item: TextItem }> = ({ item }) => (
-  <div style={{ ...layoutStyle(item.layout), display: "flex", alignItems: "center" }}>
-    <div style={{ ...textStyle(item.style), width: "100%", whiteSpace: "pre-wrap" }}>{item.text}</div>
-  </div>
-);
+const TextLayer: React.FC<{ item: TextItem }> = ({ item }) => {
+  const { inProgress } = useAnimationProgress(item);
+  const preset = item.animateIn?.preset;
+  const body = { ...textStyle(item.style), width: "100%", whiteSpace: "pre-wrap" as const };
+
+  // A typewriter is per-CHARACTER — never a mask sweep with a feathered edge,
+  // which reads as a wipe rather than typing.
+  if (preset === "type") {
+    const shown = item.text.slice(0, visibleCharacters(item.text, inProgress));
+    return (
+      <div style={{ ...layoutStyle(item.layout), display: "flex", alignItems: "center" }}>
+        <div style={body}>{shown}</div>
+      </div>
+    );
+  }
+
+  if (preset === "words") {
+    // Index the words up front rather than counting while rendering — a counter
+    // mutated inside map() is a render-phase side effect.
+    const tokens = item.text.split(/(\s+)/);
+    let seen = 0;
+    const indexed = tokens.map((token) => {
+      const isWord = token.trim().length > 0;
+      return { token, isWord, index: isWord ? seen++ : -1 };
+    });
+    const wordCount = seen;
+
+    return (
+      <div style={{ ...layoutStyle(item.layout), display: "flex", alignItems: "center" }}>
+        <div style={body}>
+          {indexed.map(({ token, isWord, index }, i) => {
+            if (!isWord) return <span key={i}>{token}</span>;
+            const p = wordProgress(index, wordCount, inProgress);
+            return (
+              <span
+                key={i}
+                style={{
+                  display: "inline-block",
+                  opacity: p,
+                  transform: `translateY(${(1 - p) * 14}px)`,
+                }}
+              >
+                {token}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ ...layoutStyle(item.layout), display: "flex", alignItems: "center" }}>
+      <div style={body}>{item.text}</div>
+    </div>
+  );
+};
 
 const SolidLayer: React.FC<{ item: SolidItem }> = ({ item }) => (
   <div style={{ ...layoutStyle(item.layout), background: item.color }} />
@@ -216,6 +270,60 @@ const SceneLayer: React.FC<{ item: SceneItem }> = ({ item }) => {
   );
 };
 
+/**
+ * Progress of an item's in and out animations at the current frame, using the
+ * house springs so an editor animation matches a generated one.
+ *
+ * Returned as a pair because opacity takes the MINIMUM of the two — the idiom
+ * the branded scenes use for an element that arrives and later leaves.
+ */
+function useAnimationProgress(item: EditorItem) {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+
+  const inSpec = item.animateIn;
+  const outSpec = item.animateOut;
+  const inProgress = inSpec && inSpec.preset !== "none"
+    ? springIn(frame, fps, 0, "SNAPPY")
+    : 1;
+  const outProgress = outSpec && outSpec.preset !== "none"
+    ? interpolate(
+        frame,
+        [item.durationInFrames - outSpec.durationInFrames, item.durationInFrames],
+        [1, 0],
+        { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
+      )
+    : 1;
+  return { inProgress, outProgress };
+}
+
+/**
+ * Wraps a layer in its in/out animation. Transform-only presets are applied
+ * here; `type` and `words` decompose the text itself and are handled by the
+ * text layer, so this stays neutral for them.
+ */
+const Animated: React.FC<{ item: EditorItem; children: React.ReactNode }> = ({ item, children }) => {
+  const { inProgress, outProgress } = useAnimationProgress(item);
+  if (!item.animateIn && !item.animateOut) return <>{children}</>;
+
+  const enter = presetStyle(item.animateIn?.preset ?? "none", inProgress, "in");
+  const leave = presetStyle(item.animateOut?.preset ?? "none", outProgress, "out");
+  const transforms = [enter.transform, leave.transform].filter((t) => t !== "none");
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        inset: 0,
+        opacity: Math.min(enter.opacity, leave.opacity),
+        transform: transforms.length > 0 ? transforms.join(" ") : undefined,
+      }}
+    >
+      {children}
+    </div>
+  );
+};
+
 const ItemLayer: React.FC<{ item: EditorItem; doc: EditorDoc; muted: boolean }> = ({ item, doc, muted }) => {
   switch (item.type) {
     case "video":
@@ -250,7 +358,9 @@ export const EditorComposition: React.FC<{ doc: EditorDoc }> = ({ doc }) => {
                 layout="none"
                 name={`${item.type}:${item.id}`}
               >
-                <ItemLayer item={item} doc={doc} muted={Boolean(track.muted)} />
+                  <Animated item={item}>
+                  <ItemLayer item={item} doc={doc} muted={Boolean(track.muted)} />
+                </Animated>
               </Sequence>
             ))}
           </AbsoluteFill>

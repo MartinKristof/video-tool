@@ -25,9 +25,10 @@ import Button from "@/components/ui/Button";
 import Icon from "@/components/ui/Icon";
 import IconButton from "@/components/ui/IconButton";
 import TypeBadge from "@/components/ui/TypeBadge";
+import Segmented from "@/components/ui/Segmented";
 import { useCodeHistory } from "@/hooks/useCodeHistory";
 import { useDocHistory } from "@/hooks/useDocHistory";
-import { addItem, docDuration, docFromScene, fullFrameLayout, makeId, type EditorDoc, type SceneItem } from "@/lib/editor-doc";
+import { addItem, docDuration, docFromScene, findItem, fullFrameLayout, makeId, updateItem, type EditorDoc, type SceneItem } from "@/lib/editor-doc";
 import { docFromVideoEdit, suspiciousSegments } from "@/lib/editor-import";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import type { PlayerRef } from "@remotion/player";
@@ -44,6 +45,9 @@ const EditorPreview = dynamic(() => import("@/components/EditorPreview"), {
 
 const DocTimeline = dynamic(() => import("@/components/DocTimeline"), { ssr: false });
 const EditorInspector = dynamic(() => import("@/components/EditorInspector"), { ssr: false });
+const FootageBrowser = dynamic(() => import("@/components/FootageBrowser"), { ssr: false });
+const EffectsPanel = dynamic(() => import("@/components/EffectsPanel"), { ssr: false });
+const SnippetEditDialog = dynamic(() => import("@/components/SnippetEditDialog"), { ssr: false });
 
 const PreviewPanel = dynamic(() => import("@/components/PreviewPanel"), {
   ssr: false,
@@ -124,6 +128,11 @@ export default function ProjectEditor() {
   const [showCodeEditor, setShowCodeEditor] = useState(false);
   // Shared by the canvas, the timeline and the inspector.
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  // Which tab each panel is showing while the visual editor is open. Code-first
+  // projects keep the old single-purpose panels.
+  const [bottomTab, setBottomTab] = useState<"footage" | "effects" | "code">("footage");
+  const [rightTab, setRightTab] = useState<"chat" | "properties">("chat");
+  const [editingSnippetId, setEditingSnippetId] = useState<string | null>(null);
   const chatRef = useRef<ChatPanelHandle>(null);
   // Bounds automatic error-retry so a persistently-broken generation can't loop
   // the model forever. Reset to 0 whenever a generation lands with no error.
@@ -594,7 +603,7 @@ export default function ProjectEditor() {
    * so hard to actually use. In the visual editor it becomes a block on a track
    * at the playhead, next to your footage.
    */
-  const handleUseSnippet = useCallback((rendered: string) => {
+  const handleUseSnippet = useCallback((rendered: string, provenance?: { id: string; values: Record<string, unknown> }) => {
     if (!doc) { commitComposition(rendered); return; }
     const evaluated = evalSceneCode(rendered);
     const trackId = doc.tracks[doc.tracks.length - 1]?.id;
@@ -606,6 +615,11 @@ export default function ProjectEditor() {
       durationInFrames: evaluated?.durationInFrames ?? doc.size.fps * 3,
       layout: fullFrameLayout(doc.size),
       code: rendered,
+      // Keep the snippet's identity and the values it was built from, so its
+      // form can be reopened and its texts changed later. The substitution in
+      // lib/snippet-template.ts runs one way only, so these cannot be recovered
+      // from the rendered code afterwards.
+      snippet: provenance,
     };
     commitDoc(addItem(doc, trackId, item));
     setSelectedItemIds(new Set([item.id]));
@@ -1062,10 +1076,39 @@ export default function ProjectEditor() {
                 <div style={{ background: "var(--bg-2)", height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
                   {docView ? (
                     <>
-                      <div className="mono cap" style={{ fontSize: 9, color: "var(--text-3)", padding: "6px 10px", borderBottom: "0.5px solid var(--line-1)" }}>
-                        Properties
+                      <div style={{ padding: "5px 8px", borderBottom: "0.5px solid var(--line-1)" }}>
+                        <Segmented
+                          value={bottomTab}
+                          onChange={(v) => setBottomTab(v as typeof bottomTab)}
+                          options={[
+                            { value: "footage", label: "Footage" },
+                            { value: "effects", label: "Effects" },
+                            { value: "code", label: "Code" },
+                          ]}
+                        />
                       </div>
-                      <EditorInspector doc={docView} selectedIds={selectedItemIds} onChange={commitDoc} />
+                      <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                        {bottomTab === "footage" && (
+                          <FootageBrowser
+                            projectId={projectId}
+                            doc={docView}
+                            onChange={commitDoc}
+                            currentFrame={currentFrame}
+                            onSelect={(id: string) => setSelectedItemIds(new Set([id]))}
+                          />
+                        )}
+                        {bottomTab === "effects" && (
+                          <EffectsPanel doc={docView} selectedIds={selectedItemIds} onChange={commitDoc} />
+                        )}
+                        {bottomTab === "code" && (
+                          <CodeEditor
+                            code={code}
+                            onChange={handleCodeChange}
+                            language="typescript"
+                            filename="Scene.tsx"
+                          />
+                        )}
+                      </div>
                     </>
                   ) : (
                   <CodeEditor
@@ -1082,6 +1125,26 @@ export default function ProjectEditor() {
           <Separator className="resize-handle resize-handle-vertical" />
           <Panel id="chat" defaultSize="28%" minSize="18%" maxSize="50%">
             <div style={{ background: "var(--bg-2)", height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
+              {docView && (
+                <div style={{ padding: "5px 8px", borderBottom: "0.5px solid var(--line-1)" }}>
+                  <Segmented
+                    value={rightTab}
+                    onChange={(v) => setRightTab(v as typeof rightTab)}
+                    options={[
+                      { value: "chat", label: "Chat" },
+                      { value: "properties", label: "Properties" },
+                    ]}
+                  />
+                </div>
+              )}
+              {docView && rightTab === "properties" ? (
+                <EditorInspector
+                  doc={docView}
+                  selectedIds={selectedItemIds}
+                  onChange={commitDoc}
+                  onEditSnippet={setEditingSnippetId}
+                />
+              ) : (
               <ChatPanel
                 ref={chatRef}
                 projectId={projectId}
@@ -1119,6 +1182,7 @@ export default function ProjectEditor() {
                 onGenerationComplete={handleGenerationComplete}
                 sceneError={sceneError}
               />
+              )}
             </div>
           </Panel>
         </Group>
@@ -1132,6 +1196,27 @@ export default function ProjectEditor() {
           fps={extractedFps}
           durationInFrames={durationInFrames}
           onResolved={handleResolved}
+        />
+      )}
+
+      {docView && (
+        <SnippetEditDialog
+          open={editingSnippetId !== null}
+          item={(() => {
+            if (!editingSnippetId) return null;
+            const found = findItem(docView, editingSnippetId);
+            return found && found.item.type === "scene" ? found.item : null;
+          })()}
+          onClose={() => setEditingSnippetId(null)}
+          onSave={(nextCode, values) => {
+            if (!editingSnippetId) return;
+            commitDoc(updateItem<SceneItem>(docView, editingSnippetId, {
+              code: nextCode,
+              snippet: { id: findItem(docView, editingSnippetId)?.item.type === "scene"
+                ? (findItem(docView, editingSnippetId)!.item as SceneItem).snippet!.id
+                : "", values },
+            }));
+          }}
         />
       )}
 

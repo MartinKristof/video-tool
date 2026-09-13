@@ -11,6 +11,8 @@
 import fs from "fs";
 import path from "path";
 import { docFromVideoEdit, suspiciousSegments } from "../lib/editor-import";
+import { ANIMATION_PRESETS, presetStyle, presetsFor, visibleCharacters, wordProgress } from "../lib/editor-effects";
+import { scrubValue } from "../components/ui/ScrubNumber";
 import { evalSceneCode } from "../remotion/DynamicScene";
 import {
   addAsset, addItem, addTrack, docDuration, emptyDoc, findItem, isValidDoc,
@@ -398,6 +400,76 @@ head("duplicate and clone");
   const copy = cloneItem(items[0], 500);
   a(copy.id !== items[0].id && copy.from === 500, "clone takes a new id and position");
   a(duplicateItem(doc, "missing") === doc, "duplicating nothing is a no-op");
+}
+
+head("animation presets — the bans, asserted in code");
+{
+  // These keep regressing in generated output, so they are tested rather than
+  // trusted. A new preset that breaks one of them fails here.
+  for (const preset of ANIMATION_PRESETS) {
+    for (const p of [0, 0.25, 0.5, 0.75, 1]) {
+      for (const dir of ["in", "out"] as const) {
+        const st = presetStyle(preset.id, p, dir);
+        a(!/blur/i.test(st.transform), `${preset.id} never blurs (${dir} @ ${p})`);
+        a(st.opacity >= 0 && st.opacity <= 1, `${preset.id} opacity stays in range`);
+        a(!/(translate[XY]\(-?\d{3,})/.test(st.transform), `${preset.id} travel stays sane (${dir} @ ${p})`);
+      }
+    }
+  }
+
+  // Rule 4: never opacity alone — a moving preset must also transform.
+  for (const preset of ANIMATION_PRESETS.filter((x) => !["none", "type", "words"].includes(x.id))) {
+    const mid = presetStyle(preset.id, 0.5);
+    a(mid.transform !== "none" && mid.transform.length > 0,
+      `${preset.id} combines opacity with a transform, never opacity alone`);
+    a(mid.opacity > 0 && mid.opacity < 1, `${preset.id} is mid-animation at 0.5`);
+  }
+
+  // Settled state must be visually neutral, or a clip would sit wrong forever.
+  for (const preset of ANIMATION_PRESETS) {
+    const done = presetStyle(preset.id, 1);
+    a(done.opacity === 1, `${preset.id} ends fully opaque`);
+    a(!/translateX\(-?[1-9]/.test(done.transform) && !/translateY\(-?[1-9]/.test(done.transform),
+      `${preset.id} ends with no leftover offset`);
+  }
+
+  a(presetStyle("rise", 0).opacity === 0, "rise starts invisible");
+  a(presetStyle("none", 0).transform === "none", "cut never transforms");
+  // Progress is clamped, so a spring overshooting past 1 can't invert anything.
+  a(presetStyle("rise", 2).opacity === 1 && presetStyle("rise", -1).opacity === 0, "progress is clamped");
+
+  // Exit mirrors the entrance direction.
+  a(presetStyle("rise", 0, "in").transform !== presetStyle("rise", 0, "out").transform,
+    "an exit travels the opposite way to an entrance");
+}
+
+head("text decomposition: typing and word cascade");
+{
+  a(visibleCharacters("hello", 0) === 0, "nothing typed at the start");
+  a(visibleCharacters("hello", 1) === 5, "all typed at the end");
+  a(visibleCharacters("hello", 0.5) === 3, `half typed is 3 of 5 (got ${visibleCharacters("hello", 0.5)})`);
+  a(visibleCharacters("hello", 5) === 5, "clamped past the end");
+
+  a(wordProgress(0, 3, 0) === 0 && wordProgress(2, 3, 1) === 1, "first word starts, last word finishes");
+  a(wordProgress(0, 3, 0.3) > wordProgress(2, 3, 0.3), "earlier words lead later ones");
+  a(wordProgress(0, 1, 0.5) === 0.5, "a single word just follows the progress");
+
+  // Typing only makes sense on text, so it must not be offered elsewhere.
+  const forVideo = presetsFor("video").map((p) => p.id);
+  a(!forVideo.includes("type") && !forVideo.includes("words"), "typing is not offered for a video clip");
+  a(presetsFor("text").map((p) => p.id).includes("type"), "typing IS offered for text");
+}
+
+head("scrubbable number maths");
+{
+  a(scrubValue(10, 20, 1) === 30, "drag right adds");
+  a(scrubValue(10, -20, 1) === -10, "drag left subtracts");
+  a(scrubValue(10, 20, 0.5) === 20, "step scales the movement");
+  a(scrubValue(10, 20, 1, { shift: true }) === 12, "shift makes it fine");
+  a(scrubValue(10, 20, 1, { alt: true }) === 210, "alt makes it coarse");
+  a(scrubValue(10, -100, 1, {}, { min: 0 }) === 0, "clamped at the minimum");
+  a(scrubValue(10, 100, 1, {}, { max: 50 }) === 50, "clamped at the maximum");
+  a(scrubValue(10, 0, 1) === 10, "no movement, no change");
 }
 
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);

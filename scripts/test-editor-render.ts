@@ -131,6 +131,39 @@ registerRoot(Root);
     a(!capShots.capA.equals(capShots.capB), "caption pages change as words are spoken");
     a(!capShots.capA.equals(shots.scene), "captions paint over the scene item beneath them");
 
+    // An animated item must actually look different while it is arriving.
+    const animDoc = (() => {
+      let d = emptyDoc(SIZE);
+      d = addItem(d, d.tracks[0].id, {
+        type: "solid", id: "anim", from: 0, durationInFrames: 30, layout: { ...full },
+        color: "#ffaa00", animateIn: { preset: "rise", durationInFrames: 12 },
+      } as SolidItem);
+      return d;
+    })();
+    const animEntry = path.join(scenesDir, `_editordoc_anim_${Date.now().toString(36)}.tsx`);
+    fs.writeFileSync(animEntry, `import React from "react";
+import { Composition, registerRoot } from "remotion";
+import { EditorComposition } from "../EditorComposition";
+const doc = ${JSON.stringify(animDoc)} as never;
+registerRoot(() => (
+  <Composition id="Scene" component={EditorComposition as never} durationInFrames={30}
+    fps={${SIZE.fps}} width={${SIZE.width}} height={${SIZE.height}} defaultProps={{ doc }} />
+));
+`, "utf-8");
+    try {
+      const serve3 = await bundle({ entryPoint: animEntry, publicDir: path.join(process.cwd(), "public") });
+      const comp3 = await selectComposition({ serveUrl: serve3, id: "Scene" });
+      const shots3: Record<string, Buffer> = {};
+      for (const [label, frame] of [["arriving", 1], ["settled", 25]] as const) {
+        const out = path.join(tmp, `anim_${label}.png`);
+        await renderStill({ composition: comp3, serveUrl: serve3, output: out, frame, imageFormat: "png" });
+        shots3[label] = fs.readFileSync(out);
+      }
+      a(!shots3.arriving.equals(shots3.settled), "an item with animateIn looks different while arriving");
+    } finally {
+      try { fs.unlinkSync(animEntry); } catch {}
+    }
+
     // Windowed scene items: the mechanism that lets a generated edit be split
     // into blocks while its animated title cards keep rendering as authored.
     const windowDoc = (() => {
