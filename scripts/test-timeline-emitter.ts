@@ -19,6 +19,7 @@ import {
   splitClip, rippleDeleteClip, reorderClip, moveClip, repack,
 } from "../lib/editable-timeline";
 import { parseTimeline, resolveExprInCode } from "../lib/timeline-parser";
+import { parseSegments, segmentDelete, segmentReorder, segmentTrim } from "../lib/data-timeline";
 import { evalSceneCode } from "../remotion/DynamicScene";
 
 let pass = 0, fail = 0;
@@ -317,5 +318,40 @@ for (const id of ids) {
 }
 
 console.log(`\n(${explicitSeen} explicit-position projects, ${implicitSeen} TransitionSeries)`);
+
+console.log("\n════════════ topic (segment) edits ════════════");
+
+// Interview/tutorial edits are driven by an array of topics. They are edited at
+// TOPIC level — delete a topic, reorder topics, trim a topic's footage — by
+// patching that array so the composition's own layout loop re-lays it out.
+for (const id of ids) {
+  let p: ProjectFile & { animationType?: string };
+  try { p = JSON.parse(fs.readFileSync(path.join(ROOT, id, "project.json"), "utf8")); } catch { continue; }
+  if (!p.code || p.animationType !== "video") continue;
+  const fps = p.settings?.fps ?? 30;
+  const sa = parseSegments(p.code, fps);
+  if (!sa || sa.segments.length < 3) continue;
+
+  const tag = `${id.slice(0,8)} "${p.name}"`;
+  const base = evalSceneCode(p.code);
+  a(!base?.error, `${tag}: baseline evaluates`);
+  const d0 = base?.durationInFrames ?? 0;
+
+  const del = segmentDelete(sa, sa.segments[1].id);
+  const dEval = evalSceneCode(del);
+  a(!dEval?.error, `${tag}: delete topic evaluates (${dEval?.error ?? "ok"})`);
+  a((parseSegments(del, fps)?.segments.length ?? 0) === sa.segments.length - 1, `${tag}: delete removes one topic`);
+  a((dEval?.durationInFrames ?? 0) < d0, `${tag}: delete shortens (${dEval?.durationInFrames} < ${d0})`);
+
+  const ro = segmentReorder(sa, sa.segments[0].id, 2);
+  const rEval = evalSceneCode(ro);
+  a(!rEval?.error, `${tag}: reorder evaluates (${rEval?.error ?? "ok"})`);
+  a(rEval?.durationInFrames === d0, `${tag}: reorder keeps duration (${rEval?.durationInFrames} === ${d0})`);
+
+  const tr = segmentTrim(sa, sa.segments[0].id, "right", -Math.round(fps));
+  const tEval = evalSceneCode(tr);
+  a(!tEval?.error, `${tag}: trim topic evaluates (${tEval?.error ?? "ok"})`);
+  a((tEval?.durationInFrames ?? 0) < d0, `${tag}: trim shortens (${tEval?.durationInFrames} < ${d0})`);
+}
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);
 if (fail) process.exit(1);

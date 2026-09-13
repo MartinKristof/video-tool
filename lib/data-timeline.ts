@@ -222,8 +222,8 @@ export function parseDataTimeline(code: string, fps: number, exportedDuration: n
     for (let idx = 0; idx < els.length; idx++) {
       const el = els[idx];
       const kind = findStringField(code, el.start, el.end, ["kind"]) ?? undefined;
-      const startF = findNumericField(code, el.start, el.end, ["startSec", "start"], constants);
-      const endF = findNumericField(code, el.start, el.end, ["endSec", "end"], constants);
+      const startF = findNumericField(code, el.start, el.end, ["startSec", "start", "inS", "in"], constants);
+      const endF = findNumericField(code, el.start, el.end, ["endSec", "end", "outS", "out"], constants);
       const durSecF = findNumericField(code, el.start, el.end, ["durSec", "durationSec", "seconds"], constants);
       const durF = findNumericField(code, el.start, el.end, ["dur", "durationInFrames", "durationFrames", "frames"], constants);
 
@@ -452,7 +452,8 @@ export function dataTrim(dt: DataTimeline, id: string, edge: "left" | "right", d
 // Computed edits (card + answer generated per topic, with crossfades) don't pass
 // the strict position gate above, so they render read-only via the runtime
 // extractor. But their driving array is a clean list of TOPIC SEGMENTS, each with
-// startSec/endSec. Editing at the segment level — delete a topic, reorder topics,
+// startSec/endSec (or the inS/outS spelling the polished interview edits use).
+// Editing at the segment level — delete a topic, reorder topics,
 // trim a topic's footage — is both safe (patches the array; the loop re-lays-out)
 // and the right granularity for interview editing. Positions come from the
 // runtime extractor; this model only supplies the source byte ranges to patch.
@@ -478,7 +479,8 @@ export interface SegmentArray {
 
 /**
  * Find the driving TOPIC-SEGMENT array literal — the one whose elements carry
- * startSec/endSec (the answer footage range). No position validation: positions
+ * the answer's footage range, written either as startSec/endSec or as the
+ * inS/outS pair the polished interview edits use. No position validation: positions
  * are supplied by the runtime extractor; we only need the editable source ranges.
  */
 export function parseSegments(code: string, fps: number): SegmentArray | null {
@@ -496,8 +498,8 @@ export function parseSegments(code: string, fps: number): SegmentArray | null {
     const segments: Segment[] = [];
     for (let idx = 0; idx < els.length; idx++) {
       const el = els[idx];
-      const startF = findNumericField(code, el.start, el.end, ["startSec", "start"], constants);
-      const endF = findNumericField(code, el.start, el.end, ["endSec", "end"], constants);
+      const startF = findNumericField(code, el.start, el.end, ["startSec", "start", "inS", "in"], constants);
+      const endF = findNumericField(code, el.start, el.end, ["endSec", "end", "outS", "out"], constants);
       if (!startF || !endF) continue;
       const label = findStringField(code, el.start, el.end, ["eyebrow", "topic", "title", "label", "lead", "heading", "index", "name"]) ?? `Topic ${segments.length + 1}`;
       segments.push({
@@ -537,19 +539,22 @@ export function segmentReorder(sa: SegmentArray, id: string, targetIndex: number
   const ordered = [...sa.segments].sort((a, b) => a.elementStart - b.elementStart);
   const fromIdx = ordered.findIndex((s) => s.id === id);
   if (fromIdx === -1) return sa.code;
+
   const texts = ordered.map((s) => sa.code.slice(s.elementStart, s.elementEnd + 1));
   const [moved] = texts.splice(fromIdx, 1);
-  const clamped = Math.max(0, Math.min(texts.length, targetIndex));
-  texts.splice(clamped, 0, moved);
-  const firstStart = Math.min(...ordered.map((s) => s.elementStart));
-  const lastEnd = Math.max(...ordered.map((s) => s.elementEnd)) + 1;
-  const lineStart = sa.code.lastIndexOf("\n", firstStart - 1) + 1;
-  const indent = sa.code.slice(lineStart, firstStart);
-  const joined = texts.join(",\n" + indent);
-  let after = lastEnd;
-  while (after < sa.code.length && (sa.code[after] === " " || sa.code[after] === "\t")) after++;
-  if (sa.code[after] === ",") after++;
-  return sa.code.slice(0, firstStart) + joined + sa.code.slice(after);
+  texts.splice(Math.max(0, Math.min(texts.length, targetIndex)), 0, moved);
+
+  // Write each topic's text into ANOTHER topic's slot, rather than rebuilding
+  // the span between the first and last topic. The driving array often
+  // interleaves other items (title cards, an end card) between the topics, and
+  // rebuilding the span deleted them along with the commas holding the array
+  // together. Slot-wise replacement leaves every other element untouched.
+  let out = sa.code;
+  for (let i = ordered.length - 1; i >= 0; i--) {
+    const slot = ordered[i];
+    out = out.slice(0, slot.elementStart) + texts[i] + out.slice(slot.elementEnd + 1);
+  }
+  return out;
 }
 
 /** Trim a segment's footage by a composition-frame delta (adjusts startSec/endSec). */
