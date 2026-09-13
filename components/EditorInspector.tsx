@@ -2,8 +2,9 @@
 
 import React from "react";
 import {
-  findItem, setLayout, updateItem,
-  type CaptionsItem, type EditorDoc, type EditorItem, type SolidItem, type TextItem,
+  findItem, hasSource, setLayout, updateItem,
+  type AudioItem, type CaptionsItem, type EditorDoc, type EditorItem, type SolidItem,
+  type TextItem, type VideoItem,
 } from "@/lib/editor-doc";
 
 /**
@@ -141,6 +142,46 @@ export default function EditorInspector({
                 {al[0].toUpperCase()}
               </button>
             ))}
+          </div>
+        </>
+      )}
+
+      {hasSource(item) && (
+        <>
+          <div style={{ fontSize: 9, color: "var(--text-3)", marginTop: 4, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            Sound
+          </div>
+          <div style={row}>
+            <span style={label}>Volume</span>
+            <input
+              type="range" min={0} max={1} step={0.01}
+              value={(item as VideoItem).volume ?? 1}
+              onChange={(e) => onChange(updateItem<AudioItem>(doc, item.id, { volume: parseFloat(e.target.value) }))}
+              style={{ width: "100%" }}
+            />
+          </div>
+          <div style={row}>
+            <span style={label}>Fade in</span>
+            <NumberField
+              value={(item as VideoItem).fadeInFrames ?? 0}
+              onCommit={(n) => onChange(updateItem<AudioItem>(doc, item.id, { fadeInFrames: Math.max(0, Math.round(n)) }))}
+            />
+            <span style={{ ...label, width: 44 }}>Fade out</span>
+            <NumberField
+              value={(item as VideoItem).fadeOutFrames ?? 0}
+              onCommit={(n) => onChange(updateItem<AudioItem>(doc, item.id, { fadeOutFrames: Math.max(0, Math.round(n)) }))}
+            />
+          </div>
+          <div style={row}>
+            <span style={label}>Speed</span>
+            <NumberField
+              step={0.05}
+              value={(item as VideoItem).playbackRate ?? 1}
+              onCommit={(n) => onChange(updateItem<AudioItem>(doc, item.id, { playbackRate: Math.max(0.25, Math.min(5, n)) }))}
+            />
+          </div>
+          <div style={{ fontSize: 9, color: "var(--text-3)", marginBottom: 8 }}>
+            Source {((item as VideoItem).sourceIn ?? 0).toFixed(2)}s – {((item as VideoItem).sourceOut ?? 0).toFixed(2)}s
           </div>
         </>
       )}

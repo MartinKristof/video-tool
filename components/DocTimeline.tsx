@@ -96,6 +96,8 @@ export default function DocTimeline({
   const tracksRef = useRef<HTMLDivElement>(null);
   /** Audio peaks per media path, fetched lazily and cached server-side too. */
   const [peaks, setPeaks] = useState<Record<string, number[]>>({});
+  const [dropping, setDropping] = useState<number | null>(null);
+  const [uploading, setUploading] = useState<string | null>(null);
   const deltaRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const rulerRef = useRef<HTMLDivElement>(null);
@@ -404,6 +406,68 @@ export default function DocTimeline({
     }
   }, [doc, projectId, currentFrame, fps, commit, onSelectionChange]);
 
+  /**
+   * Read a media file's length in the browser. Newly uploaded files aren't in the
+   * ffprobe cache yet, and a hidden media element answers this in milliseconds
+   * without troubling the server.
+   */
+  const readDuration = useCallback((src: string, kind: "video" | "audio") => {
+    return new Promise<number | undefined>((resolve) => {
+      const el = document.createElement(kind === "audio" ? "audio" : "video");
+      const done = (v: number | undefined) => { el.removeAttribute("src"); resolve(v); };
+      el.preload = "metadata";
+      el.onloadedmetadata = () => done(Number.isFinite(el.duration) ? el.duration : undefined);
+      el.onerror = () => done(undefined);
+      window.setTimeout(() => done(undefined), 8000);
+      el.src = src;
+    });
+  }, []);
+
+  /**
+   * Drop files from the desktop straight onto a track: upload into the project's
+   * media folder, then place them where they landed.
+   */
+  const handleDrop = useCallback(async (files: File[], trackId: string, atFrame: number) => {
+    if (!projectId || files.length === 0) return;
+    let next = doc;
+    let cursor = atFrame;
+    for (const file of files) {
+      setUploading(file.name);
+      try {
+        const res = await fetch(
+          `/api/media/${projectId}/upload?name=${encodeURIComponent(file.name)}`,
+          { method: "POST", body: file },
+        );
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Upload failed");
+
+        const src = `/api/media/${projectId}/${file.name}`;
+        const kind: Asset["kind"] = file.type.startsWith("audio")
+          ? "audio"
+          : file.type.startsWith("image")
+            ? "image"
+            : "video";
+        const durationSec = kind === "image" ? undefined : await readDuration(src, kind);
+        const asset: Asset = { id: makeId("asset"), kind, src, name: file.name, durationSec };
+        const frames = Math.max(1, Math.round((durationSec ?? 3) * fps));
+        const item = {
+          type: kind === "audio" ? "audio" : kind === "image" ? "image" : "video",
+          id: makeId(kind),
+          from: cursor,
+          durationInFrames: frames,
+          layout: { x: 0, y: 0, width: doc.size.width, height: doc.size.height },
+          assetId: asset.id,
+          ...(kind === "video" || kind === "audio" ? { sourceIn: 0, sourceOut: durationSec } : {}),
+        } as EditorItem;
+        next = addItem({ ...next, assets: [...next.assets, asset] }, trackId, item);
+        cursor += frames;
+      } catch (e) {
+        window.alert(`${file.name}: ${e instanceof Error ? e.message : "Upload failed"}`);
+      }
+    }
+    setUploading(null);
+    if (next !== doc) commit(next);
+  }, [doc, projectId, fps, commit, readDuration]);
+
   /** Media path relative to the project's media folder, as the API expects. */
   const relPath = useCallback(
     (src: string) => src.replace(`/api/media/${projectId}/`, ""),
@@ -491,7 +555,25 @@ export default function DocTimeline({
         )}
       </div>
 
-      <div style={{ position: "relative", width: contentW, flexShrink: 0 }} onPointerDown={deselect}>
+      <div
+        style={{
+          position: "relative", width: contentW, flexShrink: 0,
+          outline: dropping === laneIndex ? "1px dashed var(--accent)" : undefined,
+          outlineOffset: -2,
+        }}
+        onPointerDown={deselect}
+        onDragOver={(e) => { e.preventDefault(); setDropping(laneIndex); }}
+        onDragLeave={() => setDropping((d) => (d === laneIndex ? null : d))}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDropping(null);
+          const files = Array.from(e.dataTransfer?.files ?? []);
+          if (files.length === 0) return;
+          const rect = e.currentTarget.getBoundingClientRect();
+          const frame = Math.max(0, Math.round((e.clientX - rect.left) / pxPerFrame));
+          void handleDrop(files, track.id, frame);
+        }}
+      >
         {track.items.map((item) => {
           const g = previewGeom(item);
           const selected = selectedIds.has(item.id);
@@ -600,6 +682,11 @@ export default function DocTimeline({
         <button onClick={() => commit(addTrack(doc))} style={toolBtn}>+ Track</button>
         <button onClick={splitAtPlayhead} style={toolBtn} disabled={selectedIds.size !== 1}>Split</button>
         <button onClick={() => deleteSelected(true)} style={toolBtn} disabled={selectedIds.size === 0}>Delete</button>
+        {uploading && (
+          <span className="mono" style={{ fontSize: 9, color: "var(--accent)" }}>
+            uploading {uploading}…
+          </span>
+        )}
         <div style={{ flex: 1 }} />
         <button onClick={() => setSnapOn((v) => !v)} style={{ ...toolBtn, color: snapOn ? "var(--accent)" : "var(--text-3)" }}>SNAP</button>
         <button onClick={() => setZoom(1)} style={toolBtn}>Fit</button>

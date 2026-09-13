@@ -27,7 +27,7 @@ import IconButton from "@/components/ui/IconButton";
 import TypeBadge from "@/components/ui/TypeBadge";
 import { useCodeHistory } from "@/hooks/useCodeHistory";
 import { useDocHistory } from "@/hooks/useDocHistory";
-import { docDuration, docFromScene, type EditorDoc } from "@/lib/editor-doc";
+import { addItem, docDuration, docFromScene, fullFrameLayout, makeId, type EditorDoc, type SceneItem } from "@/lib/editor-doc";
 import { docFromVideoEdit, suspiciousSegments } from "@/lib/editor-import";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import type { PlayerRef } from "@remotion/player";
@@ -588,6 +588,29 @@ export default function ProjectEditor() {
     });
   }, [docHistory]);
 
+  /**
+   * Use a snippet. In the code editor that replaces the whole project, which is
+   * the only thing it could ever do and the reason the branded library has been
+   * so hard to actually use. In the visual editor it becomes a block on a track
+   * at the playhead, next to your footage.
+   */
+  const handleUseSnippet = useCallback((rendered: string) => {
+    if (!doc) { commitComposition(rendered); return; }
+    const evaluated = evalSceneCode(rendered);
+    const trackId = doc.tracks[doc.tracks.length - 1]?.id;
+    if (!trackId) return;
+    const item: SceneItem = {
+      type: "scene",
+      id: makeId("snippet"),
+      from: currentFrame,
+      durationInFrames: evaluated?.durationInFrames ?? doc.size.fps * 3,
+      layout: fullFrameLayout(doc.size),
+      code: rendered,
+    };
+    commitDoc(addItem(doc, trackId, item));
+    setSelectedItemIds(new Set([item.id]));
+  }, [doc, currentFrame, commitComposition, commitDoc]);
+
   const handleChatUpdate = useCallback((messages: ChatMessage[]) => {
     setChatHistory(messages);
   }, []);
@@ -1121,8 +1144,8 @@ export default function ProjectEditor() {
       <SnippetBrowser
         open={snippetsOpen}
         onClose={() => setSnippetsOpen(false)}
-        hasExistingCode={code.trim().length > 0}
-        onUseSnippet={commitComposition}
+        hasExistingCode={!doc && code.trim().length > 0}
+        onUseSnippet={handleUseSnippet}
       />
 
       <SmartTrimDialog
@@ -1131,7 +1154,7 @@ export default function ProjectEditor() {
         projectId={projectId}
         fps={extractedFps}
         hasMediaFolder={!!project.mediaFolder}
-        hasExistingCode={code.trim().length > 0}
+        hasExistingCode={!doc && code.trim().length > 0}
         onApply={commitComposition}
       />
 
