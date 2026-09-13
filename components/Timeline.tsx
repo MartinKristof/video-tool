@@ -11,7 +11,7 @@ import {
   rippleDeleteClip,
   rippleDeleteClips,
   reorderClip,
-  repack,
+  moveClip,
   type EditableDoc,
 } from "@/lib/editable-timeline";
 import {
@@ -338,32 +338,45 @@ export default function Timeline({
       });
       return g.filter((x) => x.clips.length > 0);
     }
-    // doc / read-only: group parseTimeline clips into lanes, attaching editable ids.
     const groups: { label: string; icon: string; editable: boolean; clips: LaneClip[] }[] = [
       { label: "Video", icon: "film", editable: false, clips: [] },
       { label: "Scenes", icon: "layers", editable: false, clips: [] },
       { label: "Audio", icon: "monitor", editable: false, clips: [] },
       { label: "Overlay", icon: "layers", editable: false, clips: [] },
     ];
-    let videoIdx = 0;
-    let sceneIdx = 0;
+
+    // Doc mode: lanes come straight from the editable doc, so every clip drawn
+    // carries its own edit id. (This used to walk parseTimeline's clips and pair
+    // them with doc clips by counting positions per kind — two different parsers
+    // that could disagree, and which left audio and overlays with no id at all.)
+    if (editMode === "doc" && editableDoc) {
+      editableDoc.clips.forEach((c, i) => {
+        const laneIdx =
+          c.kind === "audio" ? 2 : c.kind === "video" ? 0 : c.track === "free" ? 3 : 1;
+        groups[laneIdx].clips.push({
+          key: `${c.id}_${i}`,
+          clipId: c.id,
+          colorIndex: i,
+          from: c.from,
+          durationInFrames: c.durationInFrames,
+          name: c.label,
+          startFrom: c.startFrom,
+          endAt: c.endAt,
+        });
+      });
+      // Every lane is editable now — audio and overlays included. Nothing gets
+      // regenerated on an edit, so there is nothing left to protect them from.
+      for (const g of groups) g.editable = true;
+      return groups.filter((g) => g.clips.length > 0);
+    }
+
+    // Read-only: parseTimeline is all we have — draw it, don't offer edit ids.
     parsed.forEach((clip: TimelineClip, i) => {
-      let clipId: string | undefined;
-      let laneIdx = 3;
-      if (clip.type === "video") {
-        if (editMode === "doc" && editableDoc?.mode === "video") clipId = editableDoc.clips[videoIdx]?.id;
-        videoIdx++;
-        laneIdx = 0;
-      } else if (clip.type === "audio") {
-        laneIdx = 2;
-      } else if (clip.type === "scene") {
-        if (editMode === "doc" && editableDoc?.mode === "scene") clipId = editableDoc.clips[sceneIdx]?.id;
-        sceneIdx++;
-        laneIdx = 1;
-      }
+      const laneIdx =
+        clip.type === "video" ? 0 : clip.type === "scene" ? 1 : clip.type === "audio" ? 2 : 3;
       groups[laneIdx].clips.push({
-        key: `${clipId ?? "c"}_${i}`,
-        clipId: editMode === "doc" ? clipId : undefined,
+        key: `c_${i}`,
+        clipId: undefined,
         colorIndex: i,
         from: clip.from,
         durationInFrames: clip.durationInFrames,
@@ -372,8 +385,6 @@ export default function Timeline({
         endAt: clip.endAt,
       });
     });
-    groups[0].editable = editMode === "doc";
-    groups[1].editable = editMode === "doc";
     return groups.filter((g) => g.clips.length > 0);
   }, [editMode, dataTimeline, parsed, editableDoc, resolvedClips, topicClips]);
 
@@ -423,9 +434,13 @@ export default function Timeline({
     return [...s].sort((a, b) => a - b);
   }, [parsed, editUnits, baseTotalFrames]);
 
-  // Latest values for the mount-once keyboard handler.
+  // Latest values for the mount-once keyboard handler. Written after render, not
+  // during it: the handlers only read `latest.current` from events, which always
+  // run after the effect has refreshed it.
   const latest = useRef({ editMode, editableDoc, dataTimeline, segmentArray, currentFrame, selectedIds, onCodeChange, onTogglePlay, onSeek, total: baseTotalFrames });
-  latest.current = { editMode, editableDoc, dataTimeline, segmentArray, currentFrame, selectedIds, onCodeChange, onTogglePlay, onSeek, total: baseTotalFrames };
+  useEffect(() => {
+    latest.current = { editMode, editableDoc, dataTimeline, segmentArray, currentFrame, selectedIds, onCodeChange, onTogglePlay, onSeek, total: baseTotalFrames };
+  });
 
   const commitCode = useCallback(
     (next: string, alsoDeselect = false) => {
@@ -445,7 +460,9 @@ export default function Timeline({
   );
   // Stable handle so the (deps-free) keyboard callbacks can use the validated committer.
   const commitRef = useRef(commitCode);
-  commitRef.current = commitCode;
+  useEffect(() => {
+    commitRef.current = commitCode;
+  }, [commitCode]);
 
   const bladeAtPlayhead = useCallback(() => {
     const L = latest.current;
@@ -561,9 +578,28 @@ export default function Timeline({
       if (!onCodeChange) return;
       if (delta === 0 && s.mode !== "move") return;
       if (editMode === "doc" && editableDoc) {
-        if (s.mode === "trim-right") commitCode(codeFromDoc(repack(trimClipRight(editableDoc, s.clipId, delta))));
-        else if (s.mode === "trim-left") commitCode(codeFromDoc(repack(trimClipLeft(editableDoc, s.clipId, delta))));
-        else commitCode(codeFromDoc(reorderClip(editableDoc, s.clipId, reorderIndex(editUnits, s.clipId, s.originalFrom + delta))), true);
+        // Trims ripple the base track themselves, so there is no re-pack step.
+        if (s.mode === "trim-right") commitCode(codeFromDoc(trimClipRight(editableDoc, s.clipId, delta)));
+        else if (s.mode === "trim-left") commitCode(codeFromDoc(trimClipLeft(editableDoc, s.clipId, delta)));
+        else {
+          const dragged = editableDoc.clips.find((c) => c.id === s.clipId);
+          if (dragged?.track === "free") {
+            // A music bed or a caption goes exactly where it is dropped.
+            commitCode(codeFromDoc(moveClip(editableDoc, s.clipId, delta)), true);
+          } else {
+            // Reorder against the base track only — free clips aren't slots.
+            const baseIds = new Set(
+              editableDoc.clips.filter((c) => c.track === "base").map((c) => c.id),
+            );
+            const baseUnits = editUnits.filter((u) => baseIds.has(u.id));
+            commitCode(
+              codeFromDoc(
+                reorderClip(editableDoc, s.clipId, reorderIndex(baseUnits, s.clipId, s.originalFrom + delta)),
+              ),
+              true,
+            );
+          }
+        }
       } else if (editMode === "data" && dataTimeline) {
         if (s.mode === "trim-right") commitCode(dataTrim(dataTimeline, s.clipId, "right", delta));
         else if (s.mode === "trim-left") commitCode(dataTrim(dataTimeline, s.clipId, "left", delta));
@@ -953,22 +989,19 @@ export default function Timeline({
           <div
             style={{ position: "fixed", left: contextMenu.x, top: contextMenu.y, zIndex: 61, minWidth: 180, padding: 5, background: "var(--bg-3)", border: "0.5px solid var(--line-2)", borderRadius: "var(--r-sm)", boxShadow: "var(--sh-float)" }}
           >
-            {[
-              ...(canSplit ? [{ icon: "scissors", label: "Split at playhead", onClick: bladeAtPlayhead }] : []),
-              { icon: "trash", label: editMode === "segment" ? (selectedIds.size > 1 ? `Delete ${selectedIds.size} topics` : "Delete topic") : selectedIds.size > 1 ? `Delete ${selectedIds.size} clips + close gap` : "Delete + close gap", onClick: rippleSelected },
-              { icon: "close", label: "Deselect", onClick: deselectAll },
-            ].map((item) => (
-              <button
-                key={item.label}
-                onClick={() => { setContextMenu(null); item.onClick(); }}
-                style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "7px 8px", fontSize: 12, background: "transparent", border: "none", color: "var(--text-0)", borderRadius: 4, cursor: "pointer", textAlign: "left" }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-4)")}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-              >
-                <Icon name={item.icon} size={13} style={{ color: "var(--text-2)" }} />
-                {item.label}
-              </button>
-            ))}
+            {canSplit && (
+              <ContextMenuItem icon="scissors" label="Split at playhead" onPick={() => { setContextMenu(null); bladeAtPlayhead(); }} />
+            )}
+            <ContextMenuItem
+              icon="trash"
+              label={
+                editMode === "segment"
+                  ? selectedIds.size > 1 ? `Delete ${selectedIds.size} topics` : "Delete topic"
+                  : selectedIds.size > 1 ? `Delete ${selectedIds.size} clips + close gap` : "Delete + close gap"
+              }
+              onPick={() => { setContextMenu(null); rippleSelected(); }}
+            />
+            <ContextMenuItem icon="close" label="Deselect" onPick={() => { setContextMenu(null); deselectAll(); }} />
           </div>
         </>
       )}
@@ -1024,6 +1057,25 @@ function snapTargetsFor(units: EditUnit[], excludeId: string, playhead: number):
   }
   s.add(Math.round(playhead));
   return [...s].sort((a, b) => a - b);
+}
+
+/**
+ * One row of the clip context menu. Kept as its own component so the menu's
+ * handlers aren't gathered into an array during render — several of them read a
+ * ref, which is only safe to touch from an event.
+ */
+function ContextMenuItem({ icon, label, onPick }: { icon: string; label: string; onPick: () => void }) {
+  return (
+    <button
+      onClick={onPick}
+      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "7px 8px", fontSize: 12, background: "transparent", border: "none", color: "var(--text-0)", borderRadius: 4, cursor: "pointer", textAlign: "left" }}
+      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-4)")}
+      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+    >
+      <Icon name={icon} size={13} style={{ color: "var(--text-2)" }} />
+      {label}
+    </button>
+  );
 }
 
 function reorderIndex(units: EditUnit[], clipId: string, newFrom: number): number {

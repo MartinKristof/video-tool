@@ -1,0 +1,303 @@
+/**
+ * Headless regression suite for the timeline emitter (roadmap 1a + 1b).
+ *
+ *   npx tsx scripts/test-timeline-emitter.ts
+ *
+ * Two halves:
+ *   1. Synthetic fixtures covering what 1a/1b introduced — trim-attribute
+ *      splicing, per-tag trims, trimBefore/trimAfter, source-fps conversion,
+ *      split in/out points, and base-vs-free track semantics.
+ *   2. Every editable project in data/projects/ round-tripped through each edit
+ *      and re-evaluated: the emitted code still compiles, the duration export
+ *      agrees with the doc, and — the point of 1a — nothing outside the numeric
+ *      timing attributes moved.
+ */
+import fs from "fs";
+import path from "path";
+import {
+  analyzeEditability, codeFromDoc, trimClipLeft, trimClipRight,
+  splitClip, rippleDeleteClip, reorderClip, moveClip, repack,
+} from "../lib/editable-timeline";
+import { parseTimeline } from "../lib/timeline-parser";
+import { evalSceneCode } from "../remotion/DynamicScene";
+
+let pass = 0, fail = 0;
+const a = (c: boolean, m: string) => { if (c) pass++; else { fail++; console.log("  FAIL: " + m); } };
+const head = (t: string) => console.log("\n--- " + t + " ---");
+
+
+const wrap = (body: string, total = 300, fps = 30) => `import React from "react";
+
+export const fps = ${fps};
+export const durationInFrames = ${total};
+
+const Composition: React.FC = () => (
+  <AbsoluteFill style={{ backgroundColor: "#161718" }}>
+${body}
+  </AbsoluteFill>
+);
+
+export default Composition;
+`;
+
+// ───────────────────────────────────────── 1a ─────────────────────────────────
+head("video clip with NO startFrom gets one spliced in on a left-trim");
+{
+  const code = wrap(`    <Sequence from={0} durationInFrames={150}>
+      <OffthreadVideo src={"/m/a.mp4"} />
+    </Sequence>
+    <Sequence from={150} durationInFrames={150}>
+      <OffthreadVideo src={"/m/b.mp4"} />
+    </Sequence>`);
+  const { doc } = analyzeEditability(code, 30);
+  a(!!doc, "editable");
+  a(doc!.clips[0].startFrom === undefined, "no startFrom initially");
+  const next = codeFromDoc(trimClipLeft(doc!, doc!.clips[0].id, 25));
+  a(/startFrom=\{25\}/.test(next), "startFrom={25} spliced into the media tag");
+  a(!evalSceneCode(next)?.error, "still evaluates");
+  const re = analyzeEditability(next, 30).doc!;
+  a(re.clips[0].startFrom === 25, "re-parses with startFrom 25");
+  a(re.clips[0].durationInFrames === 125, "clip shortened to 125");
+  a(re.clips[1].from === 125, "following clip rippled left by 25");
+  a(re.totalDurationInFrames === 275, `total 275 (got ${re.totalDurationInFrames})`);
+}
+
+head("two <Video> tags in ONE Sequence keep their own trims");
+{
+  const code = wrap(`    <Sequence from={0} durationInFrames={150}>
+      <OffthreadVideo src={"/m/a.mp4"} startFrom={10} endAt={160} />
+      <OffthreadVideo src={"/m/b.mp4"} startFrom={900} endAt={1050} />
+    </Sequence>`, 150);
+  const clips = parseTimeline(code, 30);
+  a(clips.length === 2, `parseTimeline finds 2 (${clips.length})`);
+  a(clips[0].startFrom === 10 && clips[1].startFrom === 900,
+    `each tag keeps its own startFrom (${clips[0].startFrom}, ${clips[1].startFrom})`);
+}
+
+head("trimBefore/trimAfter parse exactly like startFrom/endAt");
+{
+  const oldSpelling = wrap(`    <Sequence from={0} durationInFrames={100}>
+      <OffthreadVideo src={"/m/a.mp4"} startFrom={30} endAt={130} />
+    </Sequence>`, 100);
+  const newSpelling = oldSpelling.replace("startFrom=", "trimBefore=").replace("endAt=", "trimAfter=");
+  const o = analyzeEditability(oldSpelling, 30).doc!;
+  const n = analyzeEditability(newSpelling, 30).doc!;
+  a(!!n, "modern spelling is editable");
+  a(n.clips[0].startFrom === o.clips[0].startFrom && n.clips[0].endAt === o.clips[0].endAt,
+    "same parsed trim values");
+  const trimmed = codeFromDoc(trimClipRight(n, n.clips[0].id, -10));
+  a(/trimAfter=\{120\}/.test(trimmed), "patches the modern attribute in place, keeping its spelling");
+}
+
+head("source fps ≠ composition fps converts the trim");
+{
+  // 60fps source in a 30fps comp: 10 comp frames == 20 source frames.
+  const code = wrap(`    <Sequence from={0} durationInFrames={100}>
+      <OffthreadVideo src={"/m/a.mp4"} startFrom={0} endAt={200} />
+    </Sequence>`, 100);
+  const { doc } = analyzeEditability(code, 30, { "/m/a.mp4": 60 }, { "/m/a.mp4": 1000 });
+  a(doc!.clips[0].nativeFps === 60, "native fps carried from the probe map");
+  const next = codeFromDoc(trimClipRight(doc!, doc!.clips[0].id, -10));
+  a(/endAt=\{180\}/.test(next), "endAt moved by 20 SOURCE frames for a 10-frame drag");
+  // Without a probe entry it falls back 1:1 (documented limitation, not a crash).
+  const noProbe = analyzeEditability(code, 30).doc!;
+  const n2 = codeFromDoc(trimClipRight(noProbe, noProbe.clips[0].id, -10));
+  a(/endAt=\{190\}/.test(n2), "no probe data ⇒ 1:1 fallback");
+}
+
+head("split gives the tail its own startFrom");
+{
+  const code = wrap(`    <Sequence from={0} durationInFrames={100}>
+      <OffthreadVideo src={"/m/a.mp4"} startFrom={50} endAt={150} />
+    </Sequence>`, 100);
+  const { doc } = analyzeEditability(code, 30);
+  const next = codeFromDoc(splitClip(doc!, doc!.clips[0].id, 40));
+  a(!evalSceneCode(next)?.error, "split evaluates");
+  const re = analyzeEditability(next, 30).doc!;
+  a(re.clips.length === 2, "two clips");
+  a(re.clips[0].startFrom === 50 && re.clips[0].endAt === 90, `head 50..90 (got ${re.clips[0].startFrom}..${re.clips[0].endAt})`);
+  a(re.clips[1].startFrom === 90 && re.clips[1].endAt === 150, `tail 90..150 (got ${re.clips[1].startFrom}..${re.clips[1].endAt})`);
+  a(re.clips[1].from === 40 && re.clips[1].durationInFrames === 60, "tail positioned at 40 for 60");
+}
+
+// ───────────────────────────────────────── 1b ─────────────────────────────────
+head("overlay starting on the same frame as a clip is no longer dropped");
+{
+  const code = wrap(`    <Sequence from={0} durationInFrames={150}>
+      <OffthreadVideo src={"/m/a.mp4"} startFrom={0} endAt={150} />
+    </Sequence>
+    <Sequence from={0} durationInFrames={60}>
+      <div style={{ color: "#fff" }}>Caption over the very first frame</div>
+    </Sequence>`, 150);
+  const clips = parseTimeline(code, 30);
+  a(clips.some(c => c.type === "scene"), "parseTimeline keeps the same-frame overlay");
+  const { doc } = analyzeEditability(code, 30);
+  a(!!doc, "composition is editable");
+  a(doc!.clips.length === 2, `2 clips (${doc!.clips.length})`);
+  const overlay = doc!.clips.find(c => c.kind === "scene")!;
+  a(overlay.track === "free", "overlay is a FREE track clip");
+  a(doc!.clips.find(c => c.kind === "video")!.track === "base", "footage is the BASE track");
+}
+
+head("a composition with audio is editable, and the audio is a free lane");
+{
+  const code = wrap(`    <Sequence from={0} durationInFrames={150}>
+      <OffthreadVideo src={"/m/a.mp4"} startFrom={0} endAt={150} />
+    </Sequence>
+    <Sequence from={150} durationInFrames={150}>
+      <OffthreadVideo src={"/m/b.mp4"} startFrom={0} endAt={150} />
+    </Sequence>
+    <Sequence from={20} durationInFrames={260}>
+      <Audio src={"/m/music.mp3"} />
+    </Sequence>`);
+  const { doc, reason } = analyzeEditability(code, 30);
+  a(!!doc, `editable (reason was: ${reason})`);
+  const audio = doc!.clips.find(c => c.kind === "audio")!;
+  a(!!audio && audio.track === "free", "audio clip is on a free track");
+
+  // trimming audio touches nothing else
+  const trimmedAudio = codeFromDoc(trimClipRight(doc!, audio.id, -60));
+  a(!evalSceneCode(trimmedAudio)?.error, "audio trim evaluates");
+  const ta = analyzeEditability(trimmedAudio, 30).doc!;
+  a(ta.clips.find(c => c.kind === "audio")!.durationInFrames === 200, "audio shortened to 200");
+  a(ta.clips.filter(c => c.kind === "video").every((c, i) => c.from === [0, 150][i]), "footage did NOT move");
+
+  // deleting the audio leaves the footage alone
+  const noAudio = codeFromDoc(rippleDeleteClip(doc!, audio.id));
+  const na = analyzeEditability(noAudio, 30).doc!;
+  a(!/<Audio\b/.test(noAudio), "audio block removed");
+  a(na.clips.filter(c => c.kind === "video").every((c, i) => c.from === [0, 150][i]), "footage did NOT jump");
+  a(na.totalDurationInFrames === 300, "total unchanged by a free-track delete");
+
+  // deleting BASE footage carries the audio along
+  const base0 = doc!.clips.find(c => c.kind === "video" && c.from === 0)!;
+  const rippled = codeFromDoc(rippleDeleteClip(doc!, base0.id));
+  const rp = analyzeEditability(rippled, 30).doc!;
+  const movedAudio = rp.clips.find(c => c.kind === "audio")!;
+  a(movedAudio.from === 0, `audio rode along with the base ripple: 20 - 150 clamps to 0 (got ${movedAudio.from})`);
+  a(rp.clips.find(c => c.kind === "video")!.from === 0, "remaining footage slid to 0");
+
+  // free clips may overlap and are not re-packed
+  const moved = repack(moveClip(doc!, audio.id, 500));
+  a(moved.clips.find(c => c.id === audio.id)!.from === 520, "free clip keeps an arbitrary position through repack");
+}
+
+head("base-track trim carries the overlay above it");
+{
+  const code = wrap(`    <Sequence from={0} durationInFrames={150}>
+      <OffthreadVideo src={"/m/a.mp4"} startFrom={0} endAt={150} />
+    </Sequence>
+    <Sequence from={150} durationInFrames={150}>
+      <OffthreadVideo src={"/m/b.mp4"} startFrom={0} endAt={150} />
+    </Sequence>
+    <Sequence from={160} durationInFrames={40}>
+      <div>lower third on clip two</div>
+    </Sequence>`);
+  const { doc } = analyzeEditability(code, 30);
+  const first = doc!.clips.find(c => c.from === 0)!;
+  const next = analyzeEditability(codeFromDoc(trimClipRight(doc!, first.id, -30)), 30).doc!;
+  a(next.clips.find(c => c.kind === "video" && c.durationInFrames === 150)!.from === 120, "second clip rippled to 120");
+  a(next.clips.find(c => c.kind === "scene")!.from === 130, `lower third rode along to 130 (got ${next.clips.find(c => c.kind === "scene")!.from})`);
+}
+
+console.log("\n════════════ real projects ════════════");
+
+
+const ROOT = path.join(__dirname, "..", "data", "projects");
+const ids = fs.readdirSync(ROOT).filter(d => fs.existsSync(path.join(ROOT, d, "project.json")));
+
+const totalExport = (code: string) => {
+  const m = code.match(/export\s+(?:const|let|var)\s+durationInFrames\s*=\s*(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
+};
+/**
+ * Blank every value the emitter is allowed to touch. Whatever remains must be
+ * byte-identical — that is the 1a guarantee: nothing else in the file moves.
+ */
+const skeleton = (code: string) => code
+  .replace(/\b(from|durationInFrames|startFrom|endAt|trimBefore|trimAfter)=\{\s*-?\d+\s*\}/g, "$1={#}")
+  // The duration export is collapsed to a literal by design when a composition
+  // declares it as a sum of scene constants, so blank the whole value.
+  .replace(/(export\s+(?:const|let|var)\s+durationInFrames\s*=\s*)[^;]+/, "$1#");
+
+type ProjectFile = { name?: string; code?: string; settings?: { fps?: number } };
+
+for (const id of ids) {
+  let p: ProjectFile;
+  try { p = JSON.parse(fs.readFileSync(path.join(ROOT, id, "project.json"), "utf8")) as ProjectFile; } catch { continue; }
+  if (!p.code) continue;
+  const fps = p.settings?.fps ?? 30;
+  const { doc } = analyzeEditability(p.code, fps);
+  if (!doc) continue;
+
+  console.log(`\n--- ${id.slice(0,8)} "${p.name}" (${doc.clips.length} clips @ ${fps}fps, total ${doc.totalDurationInFrames}) ---`);
+  a(!evalSceneCode(p.code)?.error, "baseline evaluates");
+  // The doc's own normalised source is the byte baseline (Series comps get flattened once).
+  const baseline = doc.originalCode;
+  a(!evalSceneCode(baseline)?.error, "normalised baseline evaluates");
+
+  const first = doc.clips.filter(c => c.track === "base").sort((x,y)=>x.from-y.from)[0];
+  const last = doc.clips.filter(c => c.track === "base").sort((x,y)=>x.from-y.from).slice(-1)[0];
+
+  { // trim right
+    const next = codeFromDoc(trimClipRight(doc, first.id, -10));
+    const r = evalSceneCode(next);
+    a(!r?.error, `trim-right evaluates (${r?.error ?? "ok"})`);
+    a(totalExport(next) === doc.totalDurationInFrames - 10, `trim-right total ${totalExport(next)} === ${doc.totalDurationInFrames - 10}`);
+    a(skeleton(next) === skeleton(baseline), "trim-right changes ONLY numeric timing attributes");
+  }
+  { // trim left
+    const next = codeFromDoc(trimClipLeft(doc, last.id, 10));
+    const r = evalSceneCode(next);
+    a(!r?.error, `trim-left evaluates (${r?.error ?? "ok"})`);
+    a(totalExport(next) === doc.totalDurationInFrames - 10, `trim-left total ${totalExport(next)} === ${doc.totalDurationInFrames - 10}`);
+  }
+  { // split
+    const c = first;
+    const next = codeFromDoc(splitClip(doc, c.id, c.from + Math.floor(c.durationInFrames / 2)));
+    const r = evalSceneCode(next);
+    a(!r?.error, `split evaluates (${r?.error ?? "ok"})`);
+    const re = analyzeEditability(next, fps);
+    a((re.doc?.clips.length ?? 0) === doc.clips.length + 1, `split adds a clip (${re.doc?.clips.length} vs ${doc.clips.length + 1})`);
+    a(totalExport(next) === doc.totalDurationInFrames, `split keeps total (${totalExport(next)} === ${doc.totalDurationInFrames})`);
+  }
+  if (doc.clips.length > 1) { // ripple delete
+    const nextDoc = rippleDeleteClip(doc, first.id);
+    const next = codeFromDoc(nextDoc);
+    const r = evalSceneCode(next);
+    a(!r?.error, `ripple-delete evaluates (${r?.error ?? "ok"})`);
+    const re = analyzeEditability(next, fps);
+    a((re.doc?.clips.length ?? 0) === doc.clips.length - 1, "ripple-delete removes a clip");
+    // The emitted export must agree with the doc, and the timeline must shrink.
+    // (Not simply total-minus-duration: a crossfade overlap means the survivor
+    // slides into the overlap and clamps at 0.)
+    a(totalExport(next) === nextDoc.totalDurationInFrames, `ripple-delete export ${totalExport(next)} === doc total ${nextDoc.totalDurationInFrames}`);
+    a(nextDoc.totalDurationInFrames < doc.totalDurationInFrames, "ripple-delete shortens the timeline");
+    a((re.doc?.totalDurationInFrames ?? -1) === nextDoc.totalDurationInFrames, "re-parsed total matches the doc");
+  }
+  if (doc.clips.length > 2) { // reorder
+    const next = codeFromDoc(reorderClip(doc, first.id, 2));
+    const r = evalSceneCode(next);
+    a(!r?.error, `reorder evaluates (${r?.error ?? "ok"})`);
+    a(totalExport(next) === doc.totalDurationInFrames, `reorder keeps total (${totalExport(next)} === ${doc.totalDurationInFrames})`);
+    a(skeleton(next) === skeleton(baseline), "reorder changes ONLY numeric timing attributes");
+  }
+  { // repack is a no-op on a consistent doc
+    const rp = repack(doc);
+    a(skeleton(codeFromDoc(rp)) === skeleton(baseline), "repack touches no structure");
+    a(rp.clips.every(c => doc.clips.find(o => o.id === c.id)?.from === c.from),
+      "repack is a no-op on positions (authored gaps/overlaps preserved)");
+    a(rp.totalDurationInFrames === doc.totalDurationInFrames, "repack keeps the total");
+  }
+  if (/<Audio\b/.test(baseline)) { // audio bed survives everything
+    const edits = [
+      codeFromDoc(trimClipRight(doc, first.id, -10)),
+      codeFromDoc(rippleDeleteClip(doc, first.id)),
+      codeFromDoc(reorderClip(doc, first.id, 1)),
+      codeFromDoc(splitClip(doc, first.id, first.from + 10)),
+    ];
+    a(edits.every(e => /<Audio\b/.test(e)), "<Audio> bed survives trim / delete / reorder / split");
+  }
+}
+console.log(`\n==== ${pass} passed, ${fail} failed ====`);
+if (fail) process.exit(1);

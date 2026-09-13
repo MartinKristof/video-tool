@@ -61,6 +61,8 @@ function resolveNumericExpr(expr: string, constants: Record<string, number>): nu
  * Only handles plain `<Sequence>`; `TransitionSeries.Sequence` /
  * `Series.Sequence` are excluded because their `from` is implicit.
  */
+export type BlockKind = "video" | "audio" | "scene";
+
 export interface SequenceBlock {
   from: number;
   durationInFrames: number;
@@ -72,6 +74,24 @@ export interface SequenceBlock {
   durationValueEnd: number;
   hasNonNumericFrom: boolean;       // true if the attribute value isn't a bare integer
   hasNonNumericDuration: boolean;
+  /** What the block holds: a video/audio leaf, or authored JSX (scene/overlay). */
+  kind: BlockKind;
+  src?: string;
+  /** Human-readable name for the timeline: the file name, or the component. */
+  label: string;
+  /**
+   * Source-media trim, read from the media tag's OWN byte range (so two
+   * <Video> tags in one Sequence can't inherit each other's values).
+   * `*Range` is null when the attribute isn't present; `mediaAttrInsertAt` is
+   * then where one can be spliced in.
+   */
+  startFrom?: number;
+  endAt?: number;
+  startFromRange: { start: number; end: number } | null;
+  endAtRange: { start: number; end: number } | null;
+  mediaAttrInsertAt?: number;
+  /** Media leaf found, but its trim attributes couldn't be mapped — don't patch it. */
+  mediaUnmappable?: boolean;
 }
 
 function findAttrValueRange(
@@ -98,6 +118,54 @@ function findAttrValueRange(
     }
   }
   return null;
+}
+
+/**
+ * Both spellings of Remotion's source-trim props. `startFrom`/`endAt` are
+ * deprecated in 4.x in favour of `trimBefore`/`trimAfter`; the runtime already
+ * accepts either (see remotion/DynamicScene.tsx), so the parser must too —
+ * otherwise the eventual rename silently empties the timeline.
+ */
+const TRIM_BEFORE_ATTR = "(?:startFrom|trimBefore)";
+const TRIM_AFTER_ATTR = "(?:endAt|trimAfter)";
+
+interface MediaTag {
+  kind: "video" | "audio";
+  src?: string;
+  tagStart: number;
+  tagEnd: number;   // index just past the closing ">"
+  insertAt: number; // where a new attribute can be spliced into the open tag
+}
+
+/**
+ * Locate the media leaf inside a Sequence block. Video wins over audio when a
+ * block somehow holds both — video is the base track.
+ */
+function findMediaTag(code: string, blockStart: number, blockEnd: number): MediaTag | null {
+  const slice = code.slice(blockStart, blockEnd);
+  const re = /<(OffthreadVideo|Video|Audio)\b[^>]*>/g;
+  let m: RegExpExecArray | null;
+  let audio: MediaTag | null = null;
+  while ((m = re.exec(slice)) !== null) {
+    const tagStart = blockStart + m.index;
+    const tagEnd = tagStart + m[0].length;
+    // Splice point for a new attribute: before "/>" on a self-closing tag,
+    // otherwise before ">". Located by regex rather than lastIndexOf("/") so a
+    // slash inside a src path can't be mistaken for the tag terminator.
+    const selfClose = m[0].search(/\/\s*>$/);
+    const insertAt = selfClose >= 0 ? tagStart + selfClose : tagEnd - 1;
+    const srcMatch = /\bsrc=(?:\{\s*["'`]([^"'`]+)["'`]\s*\}|"([^"]+)")/.exec(m[0]);
+    const tag: MediaTag = {
+      kind: m[1] === "Audio" ? "audio" : "video",
+      src: srcMatch ? srcMatch[1] || srcMatch[2] : undefined,
+      tagStart,
+      tagEnd,
+      insertAt,
+    };
+    if (tag.kind === "video") return tag;
+    if (!audio) audio = tag;
+  }
+  return audio;
 }
 
 export function parseSequenceBlocks(code: string, fps: number): SequenceBlock[] {
@@ -147,7 +215,44 @@ export function parseSequenceBlocks(code: string, fps: number): SequenceBlock[] 
     const durVal = resolveNumericExpr(durRange.raw, constants);
     if (fromVal === null || durVal === null) continue;
 
+    // Classify the block and, for media leaves, map the trim attributes so the
+    // emitter can patch them in place instead of regenerating the file.
+    const media = findMediaTag(code, openStart, blockEnd);
+    let kind: BlockKind = "scene";
+    let src: string | undefined;
+    let startFrom: number | undefined;
+    let endAt: number | undefined;
+    let startFromRange: { start: number; end: number } | null = null;
+    let endAtRange: { start: number; end: number } | null = null;
+    let mediaAttrInsertAt: number | undefined;
+    let mediaUnmappable: boolean | undefined;
+
+    if (media) {
+      kind = media.kind;
+      src = media.src;
+      mediaAttrInsertAt = media.insertAt;
+      const sfRange = findAttrValueRange(code, media.tagStart, media.tagEnd, TRIM_BEFORE_ATTR);
+      const eaRange = findAttrValueRange(code, media.tagStart, media.tagEnd, TRIM_AFTER_ATTR);
+      if (sfRange) {
+        const v = resolveNumericExpr(sfRange.raw, constants);
+        if (v === null) mediaUnmappable = true;
+        else {
+          startFrom = v;
+          startFromRange = { start: sfRange.start, end: sfRange.end };
+        }
+      }
+      if (eaRange) {
+        const v = resolveNumericExpr(eaRange.raw, constants);
+        if (v === null) mediaUnmappable = true;
+        else {
+          endAt = v;
+          endAtRange = { start: eaRange.start, end: eaRange.end };
+        }
+      }
+    }
+
     blocks.push({
+      label: blockLabel(code, openEnd, blockEnd, kind, src),
       from: fromVal,
       durationInFrames: durVal,
       blockStart: openStart,
@@ -158,11 +263,131 @@ export function parseSequenceBlocks(code: string, fps: number): SequenceBlock[] 
       durationValueEnd: durRange.end,
       hasNonNumericFrom: !/^\s*\d+\s*$/.test(fromRange.raw),
       hasNonNumericDuration: !/^\s*\d+\s*$/.test(durRange.raw),
+      kind,
+      src,
+      startFrom,
+      endAt,
+      startFromRange,
+      endAtRange,
+      mediaAttrInsertAt,
+      mediaUnmappable,
     });
   }
 
   blocks.sort((a, b) => a.blockStart - b.blockStart);
   return blocks;
+}
+
+/**
+ * Smart Trim emits `<Series><Series.Sequence durationInFrames={D}>…</Series.Sequence>…</Series>`,
+ * where each child's `from` is implicit (a running total) and therefore can't be
+ * patched in place. Rewrite it once into explicit
+ * `<Sequence from={F} durationInFrames={D}>` blocks so the single patching
+ * emitter can edit it like any other composition.
+ *
+ * Lossless: only the <Series> wrapper and the child tag names change — the
+ * header comments and every media tag survive byte-for-byte. (This replaces the
+ * old video-mode behaviour, which achieved the same flattening by regenerating
+ * the entire file and discarding everything else in it.)
+ *
+ * Returns null when the shape isn't the plain one we understand — e.g. a
+ * `Series.Sequence` carrying `offset`, whose timing we would silently change —
+ * so the caller can fall back to read-only instead of guessing.
+ */
+/** Name a block for the timeline: the media file, or the component it renders. */
+function blockLabel(
+  code: string,
+  contentStart: number,
+  blockEnd: number,
+  kind: BlockKind,
+  src?: string,
+): string {
+  if (src) return extractFilename(src);
+  // Scan the block's CONTENT, not its opening tag — otherwise every scene would
+  // be named after the <Sequence> wrapping it.
+  const inner = code.slice(contentStart, blockEnd);
+  const component = /<([A-Z]\w*)\b/.exec(inner);
+  if (component && component[1] !== "Sequence") return component[1];
+  return kind === "audio" ? "Audio" : "Scene";
+}
+
+export function normalizeSeriesToSequences(code: string, fps: number): string | null {
+  const openMatch = /<Series\s*>/.exec(code);
+  const closeIdx = code.lastIndexOf("</Series>");
+  if (!openMatch || closeIdx < 0 || closeIdx < openMatch.index) return null;
+  if (/<TransitionSeries\b/.test(code)) return null;
+
+  const constants: Record<string, number> = { fps };
+  const constRegex = /(?:const|let|var)\s+(\w+)\s*=\s*(\d+)/g;
+  let cm: RegExpExecArray | null;
+  while ((cm = constRegex.exec(code)) !== null) {
+    constants[cm[1]] = parseInt(cm[2], 10);
+  }
+  const fpsExport = code.match(/export\s+(?:const|let|var)\s+fps\s*=\s*(\d+)/);
+  if (fpsExport) constants.fps = parseInt(fpsExport[1], 10);
+
+  const body = code.slice(openMatch.index + openMatch[0].length, closeIdx);
+  const childRe = /<Series\.Sequence\b([^>]*)>([\s\S]*?)<\/Series\.Sequence>/g;
+  const rewritten: string[] = [];
+  let running = 0;
+  let child: RegExpExecArray | null;
+  while ((child = childRe.exec(body)) !== null) {
+    const [, attrs, inner] = child;
+    // `offset` shifts a child relative to the running total; flattening it to a
+    // literal `from` would need maths we deliberately don't guess at.
+    if (/\boffset\s*=/.test(attrs)) return null;
+    const durMatch = /\bdurationInFrames\s*=\s*\{([^}]+)\}/.exec(attrs);
+    if (!durMatch) return null;
+    const dur = resolveNumericExpr(durMatch[1], constants);
+    if (dur === null) return null;
+    const otherAttrs = attrs
+      .replace(/\bdurationInFrames\s*=\s*\{[^}]+\}/, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    const extra = otherAttrs ? ` ${otherAttrs}` : "";
+    rewritten.push(
+      `<Sequence from={${running}} durationInFrames={${dur}}${extra}>${inner}</Sequence>`,
+    );
+    running += dur;
+  }
+  if (rewritten.length === 0) return null;
+  // Everything between the wrapper tags must be the children themselves plus
+  // whitespace; anything else would be dropped by the rewrite.
+  if (body.replace(childRe, "").trim() !== "") return null;
+
+  // Re-indent to where <Series> sat, so the flattened blocks line up. Only
+  // swallow the leading whitespace when <Series> is alone on its line —
+  // otherwise cutting back to the line start would delete whatever shares it
+  // (e.g. the enclosing <AbsoluteFill> opening tag).
+  const lineStart = code.lastIndexOf("\n", openMatch.index - 1) + 1;
+  const ownsLine = /^\s*$/.test(code.slice(lineStart, openMatch.index));
+  const cutStart = ownsLine ? lineStart : openMatch.index;
+  const indent = ownsLine ? code.slice(lineStart, openMatch.index) : "";
+  // Wrap in a fragment: <Series> is one element, and the blocks replacing it are
+  // N siblings. Without a parent that is a syntax error wherever <Series> was
+  // the sole returned element (`return (<Series>…</Series>)`), which is exactly
+  // how the generator writes it.
+  const joined = [
+    `${indent}<>`,
+    ...rewritten.map((b) => `${indent}  ${b}`),
+    `${indent}</>`,
+  ].join("\n");
+
+  let out =
+    code.slice(0, cutStart) + joined + code.slice(closeIdx + "</Series>".length);
+
+  // Swap the now-unused `Series` import for `Sequence`.
+  out = out.replace(/(import\s*\{)([^}]*)(\}\s*from\s*["']remotion["'])/, (_m, a, names, b) => {
+    const list = names
+      .split(",")
+      .map((n: string) => n.trim())
+      .filter(Boolean)
+      .filter((n: string) => n !== "Series");
+    if (!list.includes("Sequence")) list.push("Sequence");
+    return `${a} ${list.join(", ")} ${b}`;
+  });
+
+  return out;
 }
 
 export function parseTimeline(code: string, fps: number): TimelineClip[] {
@@ -187,13 +412,18 @@ export function parseTimeline(code: string, fps: number): TimelineClip[] {
   const sequenceRegex2 = /<Sequence[^>]*?\bdurationInFrames=\{([^}]+)\}[^>]*?\bfrom=\{([^}]+)\}[^>]*?>([\s\S]*?)<\/Sequence>/g;
 
   function parseSequenceContent(from: number, duration: number, content: string) {
+    const clipsBefore = clips.length;
+
     // Look for video sources
     const videoRegex = /<(?:OffthreadVideo|Video)\s[^>]*?src=(?:\{["`']([^"'`]+)["`']\}|"([^"]+)")[^>]*?\/?>/g;
     let vMatch;
     while ((vMatch = videoRegex.exec(content)) !== null) {
       const src = vMatch[1] || vMatch[2];
-      const startFromMatch = content.match(/startFrom=\{(\d+)\}/);
-      const endAtMatch = content.match(/endAt=\{(\d+)\}/);
+      // Read the trim off THIS tag (vMatch[0]), not the whole Sequence body —
+      // otherwise two <Video> tags in one block both take the first one's
+      // values. Accept the modern trimBefore/trimAfter spelling too.
+      const startFromMatch = vMatch[0].match(/(?:startFrom|trimBefore)=\{(\d+)\}/);
+      const endAtMatch = vMatch[0].match(/(?:endAt|trimAfter)=\{(\d+)\}/);
 
       clips.push({
         name: extractFilename(src),
@@ -220,8 +450,11 @@ export function parseTimeline(code: string, fps: number): TimelineClip[] {
       });
     }
 
-    // If no media found, it's a scene/overlay
-    if (!clips.find((c) => c.from === from && (c.type === "video" || c.type === "audio"))) {
+    // If THIS Sequence contributed no media clip, it's a scene/overlay. Scoped
+    // to this call: the old global `clips.find(c => c.from === from && ...)`
+    // dropped an overlay whenever it merely started on the same frame as some
+    // earlier video or audio clip — exactly how captions sit over footage.
+    if (clips.length === clipsBefore) {
       // Check for any meaningful content
       const hasContent = /<(?:div|h1|h2|p|span|AbsoluteFill|Img)\b/.test(content);
       if (hasContent) {
