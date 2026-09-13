@@ -462,3 +462,49 @@ export function updateItem<T extends EditorItem>(
 export function hasSource(item: EditorItem): item is VideoItem | AudioItem {
   return item.type === "video" || item.type === "audio";
 }
+
+/**
+ * Frames worth snapping to while dragging: every other item's edges, zero, the
+ * end of the composition, and optionally the playhead. Pair with `snapFrame`
+ * from lib/editable-timeline.ts, which is model-agnostic.
+ */
+export function snapTargets(
+  doc: EditorDoc,
+  opts: { excludeItemId?: string; playhead?: number } = {},
+): number[] {
+  const targets = new Set<number>([0, docDuration(doc)]);
+  for (const track of doc.tracks) {
+    for (const item of track.items) {
+      if (item.id === opts.excludeItemId) continue;
+      targets.add(item.from);
+      targets.add(item.from + item.durationInFrames);
+    }
+  }
+  if (opts.playhead != null) targets.add(Math.round(opts.playhead));
+  return [...targets].sort((a, b) => a - b);
+}
+
+/**
+ * Wrap an existing code-first project as a single scene item — how a legacy
+ * project enters the editor without anything being parsed.
+ */
+export function docFromScene(
+  size: DocSize,
+  code: string,
+  durationInFrames: number,
+  name = "Scene",
+): EditorDoc {
+  const doc = emptyDoc(size);
+  const item: SceneItem = {
+    type: "scene",
+    id: makeId("scene"),
+    from: 0,
+    durationInFrames: Math.max(1, durationInFrames),
+    layout: fullFrameLayout(size),
+    code,
+  };
+  return {
+    ...doc,
+    tracks: [{ ...doc.tracks[0], name, items: [item] }],
+  };
+}

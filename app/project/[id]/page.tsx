@@ -26,9 +26,22 @@ import Icon from "@/components/ui/Icon";
 import IconButton from "@/components/ui/IconButton";
 import TypeBadge from "@/components/ui/TypeBadge";
 import { useCodeHistory } from "@/hooks/useCodeHistory";
+import { useDocHistory } from "@/hooks/useDocHistory";
+import { docDuration, docFromScene, type EditorDoc } from "@/lib/editor-doc";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import type { PlayerRef } from "@remotion/player";
 import type { ResolvedClip } from "@/lib/timeline-extract";
+
+const EditorPreview = dynamic(() => import("@/components/EditorPreview"), {
+  ssr: false,
+  loading: () => (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-2)", fontSize: 13 }}>
+      Loading preview...
+    </div>
+  ),
+});
+
+const DocTimeline = dynamic(() => import("@/components/DocTimeline"), { ssr: false });
 
 const PreviewPanel = dynamic(() => import("@/components/PreviewPanel"), {
   ssr: false,
@@ -96,6 +109,13 @@ export default function ProjectEditor() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef<{ code: string; chatLength: number; annotations: string; styleMode: StyleMode }>({ code: "", chatLength: 0, annotations: "", styleMode: "default" });
   const codeHistory = useCodeHistory();
+  // The editor document. When present it is the source of truth for the video
+  // and this project opens in the visual editor instead of the code editor.
+  const [doc, setDoc] = useState<EditorDoc | undefined>(undefined);
+  const docHistory = useDocHistory();
+  const [docMedia, setDocMedia] = useState<{ name: string; path: string; type: string }[]>([]);
+  const [docMediaDurations, setDocMediaDurations] = useState<Record<string, number>>({});
+  const lastSavedDocRef = useRef<string>("");
   const chatRef = useRef<ChatPanelHandle>(null);
   // Bounds automatic error-retry so a persistently-broken generation can't loop
   // the model forever. Reset to 0 whenever a generation lands with no error.
@@ -134,6 +154,11 @@ export default function ProjectEditor() {
         // Seed version history with the loaded state so the first generation
         // can be undone back to it (code + chat together).
         codeHistory.pushSnapshot(data.code, data.chatHistory);
+        if (data.doc) {
+          setDoc(data.doc);
+          docHistory.pushSnapshot(data.doc);
+          lastSavedDocRef.current = JSON.stringify(data.doc);
+        }
         setTerminalAnnotations(data.terminalAnnotations);
         setCustomTheme(Boolean(data.customTheme));
         setStyleMode(data.styleMode ?? "default");
@@ -292,7 +317,9 @@ export default function ProjectEditor() {
     const hasChatChanged = chatHistory.length !== lastSavedRef.current.chatLength;
     const hasAnnotationsChanged = annotationsKey !== lastSavedRef.current.annotations;
     const hasStyleChanged = styleMode !== lastSavedRef.current.styleMode;
-    if (!hasCodeChanged && !hasChatChanged && !hasAnnotationsChanged && !hasStyleChanged) return;
+    const docKey = doc ? JSON.stringify(doc) : "";
+    const hasDocChanged = docKey !== lastSavedDocRef.current;
+    if (!hasCodeChanged && !hasChatChanged && !hasAnnotationsChanged && !hasStyleChanged && !hasDocChanged) return;
 
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
@@ -300,9 +327,10 @@ export default function ProjectEditor() {
         await fetch(`/api/projects/${projectId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code, chatHistory, styleMode, ...(terminalAnnotations !== undefined ? { terminalAnnotations } : {}) }),
+          body: JSON.stringify({ code, chatHistory, styleMode, ...(terminalAnnotations !== undefined ? { terminalAnnotations } : {}), ...(doc ? { doc } : {}) }),
         });
         lastSavedRef.current = { code, chatLength: chatHistory.length, annotations: annotationsKey, styleMode };
+        lastSavedDocRef.current = docKey;
       } catch {
         // silent fail
       }
@@ -311,7 +339,7 @@ export default function ProjectEditor() {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [code, chatHistory, terminalAnnotations, styleMode, project, projectId]);
+  }, [code, chatHistory, terminalAnnotations, styleMode, doc, project, projectId]);
 
   // Toggle customTheme with an immediate PATCH so the next AI request reads
   // the new value (the debounced save would race against fast chat sends).
@@ -393,22 +421,32 @@ export default function ProjectEditor() {
         const inMonaco = active?.closest(".monaco-editor");
         if (!inMonaco) {
           e.preventDefault();
-          const prev = codeHistory.undo();
-          if (prev !== null) { setCode(prev.code); setChatHistory(prev.chat); }
+          if (doc) {
+            const prevDoc = docHistory.undo();
+            if (prevDoc !== null) setDoc(prevDoc);
+          } else {
+            const prev = codeHistory.undo();
+            if (prev !== null) { setCode(prev.code); setChatHistory(prev.chat); }
+          }
         }
       } else if (mod && e.key === "z" && e.shiftKey) {
         const active = document.activeElement;
         const inMonaco = active?.closest(".monaco-editor");
         if (!inMonaco) {
           e.preventDefault();
-          const next = codeHistory.redo();
-          if (next !== null) { setCode(next.code); setChatHistory(next.chat); }
+          if (doc) {
+            const nextDoc = docHistory.redo();
+            if (nextDoc !== null) setDoc(nextDoc);
+          } else {
+            const next = codeHistory.redo();
+            if (next !== null) { setCode(next.code); setChatHistory(next.chat); }
+          }
         }
       }
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [forceSave, code, codeHistory]);
+  }, [forceSave, code, codeHistory, doc, docHistory]);
 
   const { durationInFrames, fps: extractedFps, sceneError } = useMemo(() => {
     if (!code || !code.trim()) return { durationInFrames: 250, fps: project?.settings.fps ?? 25, sceneError: undefined };
@@ -418,13 +456,16 @@ export default function ProjectEditor() {
       const m = parseSceneMeta(code);
       return { durationInFrames: m.durationInFrames, fps: m.fps, sceneError: undefined };
     }
+    if (doc) {
+      return { durationInFrames: docDuration(doc), fps: doc.size.fps, sceneError: undefined };
+    }
     const result = evalSceneCode(code);
     return {
       durationInFrames: result?.durationInFrames ?? 250,
       fps: result?.fps ?? project?.settings.fps ?? 25,
       sceneError: result?.error,
     };
-  }, [code, project?.settings.fps, project?.engine]);
+  }, [code, doc, project?.settings.fps, project?.engine]);
 
   // Poll the preview Player for the current frame so the timeline playhead
   // tracks playback. No-ops when the Player isn't mounted (Terminal / HyperFrames
@@ -461,6 +502,30 @@ export default function ProjectEditor() {
     if (p.isPlaying()) p.pause();
     else p.play();
   }, []);
+
+  // The editor's insert picker needs to know what media the project holds and
+  // how long each file is, so a dropped clip lands at its true length.
+  useEffect(() => {
+    if (!doc) return;
+    let cancelled = false;
+    Promise.all([
+      fetch(`/api/media/${projectId}/list`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      fetch(`/api/media/${projectId}/probe-map`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    ]).then(([list, probe]) => {
+      if (cancelled) return;
+      const files = (list?.files ?? list ?? []) as { name: string; path: string; type: string }[];
+      if (Array.isArray(files)) setDocMedia(files);
+      if (probe?.fps && probe?.nbFrames) {
+        const durations: Record<string, number> = {};
+        for (const [rel, frames] of Object.entries(probe.nbFrames as Record<string, number>)) {
+          const f = (probe.fps as Record<string, number>)[rel];
+          if (f) durations[rel] = frames / f;
+        }
+        setDocMediaDurations(durations);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [doc, projectId]);
 
   // Fetch native fps per media file (cache-only) for correct trim math on video projects.
   useEffect(() => {
@@ -503,6 +568,15 @@ export default function ProjectEditor() {
     codeHistory.pushSnapshot(next, chatHistory);
     setCode(next);
   }, [code, chatHistory, codeHistory]);
+
+  /** Apply a document change AND record it for undo. Mirrors commitComposition. */
+  const commitDoc = useCallback((next: EditorDoc) => {
+    setDoc((prev) => {
+      if (prev) docHistory.pushSnapshot(prev);
+      docHistory.pushSnapshot(next);
+      return next;
+    });
+  }, [docHistory]);
 
   const handleChatUpdate = useCallback((messages: ChatMessage[]) => {
     setChatHistory(messages);
@@ -596,12 +670,14 @@ export default function ProjectEditor() {
   // can be reordered, trimmed, and split via the editable timeline.
   // The editable timeline parses Remotion <Sequence> blocks — it doesn't apply
   // to HyperFrames scenes (plain HTML/GSAP, no Sequence model).
+  // The visual editor always has a timeline; otherwise it depends on the type.
   const hasTimeline =
-    !isHyperframes &&
+    Boolean(doc) ||
+    (!isHyperframes &&
     (project.animationType === "video" ||
       project.animationType === "animation" ||
       project.animationType === "broll" ||
-      project.animationType === "svg");
+      project.animationType === "svg"));
   // Only run the (browser-side) runtime extractor when the static parsers likely
   // can't see the clips: runtime-computed layouts (TransitionSeries, .map, Series).
   //
@@ -770,6 +846,27 @@ export default function ProjectEditor() {
             Assets
           </Button>
         )}
+        {!doc && !isTerminalProject && !isHyperframes && (
+          <Button
+            variant="outline"
+            size="sm"
+            icon="layers"
+            title="Open this project in the visual editor. The existing composition becomes one block on a track — nothing is parsed or rewritten, and the code stays exactly as it is."
+            onClick={() => {
+              const evaluated = evalSceneCode(code);
+              commitDoc(
+                docFromScene(
+                  { width, height, fps: evaluated?.fps ?? project.settings.fps },
+                  code,
+                  evaluated?.durationInFrames ?? 250,
+                  project.name,
+                ),
+              );
+            }}
+          >
+            Open in editor
+          </Button>
+        )}
         {isTerminalProject ? (
           <Button
             variant="primary"
@@ -815,7 +912,9 @@ export default function ProjectEditor() {
             >
               <Panel id="preview" defaultSize={hasTimeline ? "50%" : "65%"} minSize="15%">
                 <div style={{ background: "#000", height: "100%", minHeight: 0, minWidth: 0, overflow: "hidden" }}>
-                  {isTerminalProject ? (
+                  {doc ? (
+                    <EditorPreview doc={doc} playerRef={playerRef} />
+                  ) : isTerminalProject ? (
                     <TerminalPreview
                       projectId={projectId}
                       code={code}
@@ -839,6 +938,19 @@ export default function ProjectEditor() {
                   <Separator className="resize-handle resize-handle-horizontal" />
                   <Panel id="timeline" defaultSize="30%" minSize="12%">
                     <div style={{ background: "var(--bg-2)", height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
+                      {doc ? (
+                      <DocTimeline
+                        doc={doc}
+                        onChange={commitDoc}
+                        currentFrame={currentFrame}
+                        onSeek={seekTo}
+                        onScrubStart={handleScrubStart}
+                        onTogglePlay={togglePlay}
+                        mediaFiles={docMedia}
+                        mediaDurations={docMediaDurations}
+                        projectId={projectId}
+                      />
+                      ) : (
                       <Timeline
                         code={code}
                         fps={extractedFps}
@@ -855,6 +967,7 @@ export default function ProjectEditor() {
                         onTogglePlay={togglePlay}
                         isPlaying={isPlaying}
                       />
+                      )}
                     </div>
                   </Panel>
                 </>
