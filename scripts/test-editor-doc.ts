@@ -11,7 +11,7 @@
 import {
   addAsset, addItem, addTrack, docDuration, emptyDoc, findItem, isValidDoc,
   makeId, moveItem, removeItem, reorderTrack, rippleRemoveItem, setLayout,
-  splitItem, trimItem, updateItem,
+  resizeLayout, snapBox, splitItem, trimItem, updateItem,
   type Asset, type EditorDoc, type SolidItem, type TextItem, type VideoItem,
 } from "../lib/editor-doc";
 
@@ -185,6 +185,46 @@ head("ids are unique");
 {
   const ids = new Set(Array.from({ length: 500 }, () => makeId("x")));
   a(ids.size === 500, `500 distinct ids (got ${ids.size})`);
+}
+
+head("canvas: resize handles");
+{
+  const o = { x: 100, y: 100, width: 200, height: 100 };
+  a(JSON.stringify(resizeLayout(o, "e", 50, 0)) === JSON.stringify({ x: 100, y: 100, width: 250, height: 100 }),
+    "east grows width, origin fixed");
+  a(JSON.stringify(resizeLayout(o, "s", 0, 40)) === JSON.stringify({ x: 100, y: 100, width: 200, height: 140 }),
+    "south grows height, origin fixed");
+  // The corner cases that go wrong quietly: west/north move the origin too.
+  a(JSON.stringify(resizeLayout(o, "w", 50, 0)) === JSON.stringify({ x: 150, y: 100, width: 150, height: 100 }),
+    "west moves x AND shrinks width");
+  a(JSON.stringify(resizeLayout(o, "n", 0, 30)) === JSON.stringify({ x: 100, y: 130, width: 200, height: 70 }),
+    "north moves y AND shrinks height");
+  a(JSON.stringify(resizeLayout(o, "nw", 20, 20)) === JSON.stringify({ x: 120, y: 120, width: 180, height: 80 }),
+    "corner does both axes");
+  // A box may never invert — the moving edge stops at the minimum.
+  const crushed = resizeLayout(o, "w", 1000, 0);
+  a(crushed.width === 8 && crushed.x === 292, `west crush stops at the fixed edge (got x ${crushed.x}, w ${crushed.width})`);
+  const crushedN = resizeLayout(o, "n", 0, 1000);
+  a(crushedN.height === 8 && crushedN.y === 192, `north crush stops at the fixed edge (got y ${crushedN.y}, h ${crushedN.height})`);
+  a(resizeLayout(o, "e", -1000, 0).width === 8, "east crush clamps too");
+}
+
+head("canvas: snapping to the frame");
+{
+  const size = { width: 1000, height: 500, fps: 30 };
+  const near = snapBox(3, 200, 200, 100, size, 8);
+  a(near.x === 0 && near.guideX === 0, "left edge snaps to the frame edge");
+  const centre = snapBox(398, 200, 200, 100, size, 8);
+  a(centre.x === 400 && centre.guideX === 500, `centre snaps to the frame centre (got ${centre.x})`);
+  const right = snapBox(795, 200, 200, 100, size, 8);
+  a(right.x === 800 && right.guideX === 1000, "right edge snaps to the frame edge");
+  // Careful choosing this fixture: a 200-wide box at x=300 has its RIGHT edge on
+  // the frame centre, so it snaps — correctly. Use a box whose edges and centre
+  // are all far from every guide.
+  const none = snapBox(300, 200, 100, 100, size, 8);
+  a(none.x === 300 && none.guideX === null, `nothing nearby, nothing moves (got ${none.x})`);
+  const vert = snapBox(300, 197, 200, 100, size, 8);
+  a(vert.y === 200 && vert.guideY === 250, "vertical centre snaps independently");
 }
 
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);

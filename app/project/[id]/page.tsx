@@ -42,6 +42,7 @@ const EditorPreview = dynamic(() => import("@/components/EditorPreview"), {
 });
 
 const DocTimeline = dynamic(() => import("@/components/DocTimeline"), { ssr: false });
+const EditorInspector = dynamic(() => import("@/components/EditorInspector"), { ssr: false });
 
 const PreviewPanel = dynamic(() => import("@/components/PreviewPanel"), {
   ssr: false,
@@ -120,6 +121,8 @@ export default function ProjectEditor() {
   // toggle — switching back to code destroys nothing, so trying the editor is
   // never a one-way door.
   const [showCodeEditor, setShowCodeEditor] = useState(false);
+  // Shared by the canvas, the timeline and the inspector.
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const chatRef = useRef<ChatPanelHandle>(null);
   // Bounds automatic error-retry so a persistently-broken generation can't loop
   // the model forever. Reset to 0 whenever a generation lands with no error.
@@ -932,7 +935,14 @@ export default function ProjectEditor() {
               <Panel id="preview" defaultSize={hasTimeline ? "50%" : "65%"} minSize="15%">
                 <div style={{ background: "#000", height: "100%", minHeight: 0, minWidth: 0, overflow: "hidden" }}>
                   {docView ? (
-                    <EditorPreview doc={docView} playerRef={playerRef} />
+                    <EditorPreview
+                      doc={docView}
+                      playerRef={playerRef}
+                      currentFrame={currentFrame}
+                      selectedIds={selectedItemIds}
+                      onSelectionChange={setSelectedItemIds}
+                      onChange={commitDoc}
+                    />
                   ) : isTerminalProject ? (
                     <TerminalPreview
                       projectId={projectId}
@@ -968,6 +978,8 @@ export default function ProjectEditor() {
                         mediaFiles={docMedia}
                         mediaDurations={docMediaDurations}
                         projectId={projectId}
+                        selectedIds={selectedItemIds}
+                        onSelectionChange={setSelectedItemIds}
                       />
                       ) : (
                       <Timeline
@@ -994,12 +1006,21 @@ export default function ProjectEditor() {
               <Separator className="resize-handle resize-handle-horizontal" />
               <Panel id="code" defaultSize={hasTimeline ? "20%" : "35%"} minSize="10%">
                 <div style={{ background: "var(--bg-2)", height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
+                  {docView ? (
+                    <>
+                      <div className="mono cap" style={{ fontSize: 9, color: "var(--text-3)", padding: "6px 10px", borderBottom: "0.5px solid var(--line-1)" }}>
+                        Properties
+                      </div>
+                      <EditorInspector doc={docView} selectedIds={selectedItemIds} onChange={commitDoc} />
+                    </>
+                  ) : (
                   <CodeEditor
                     code={code}
                     onChange={handleCodeChange}
                     language={isTerminalProject ? "vhs" : "typescript"}
                     filename={isTerminalProject ? "tape.tape" : isHyperframes ? "scene.js" : "Scene.tsx"}
                   />
+                  )}
                 </div>
               </Panel>
             </Group>

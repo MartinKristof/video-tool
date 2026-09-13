@@ -508,3 +508,70 @@ export function docFromScene(
     tracks: [{ ...doc.tracks[0], name, items: [item] }],
   };
 }
+
+export type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+
+/**
+ * Apply a resize-handle drag to a layout box, in composition pixels.
+ *
+ * The west and north handles move the box's origin as well as its size, which is
+ * the part that goes wrong quietly. The box is never allowed to invert: at the
+ * minimum size the moving edge stops rather than crossing the fixed one.
+ */
+export function resizeLayout(
+  origin: ItemLayout,
+  handle: ResizeHandle,
+  dx: number,
+  dy: number,
+  minSize = 8,
+): ItemLayout {
+  let { x, y, width, height } = origin;
+
+  if (handle.includes("w")) {
+    x = origin.x + dx;
+    width = origin.width - dx;
+  }
+  if (handle.includes("e")) width = origin.width + dx;
+  if (handle.includes("n")) {
+    y = origin.y + dy;
+    height = origin.height - dy;
+  }
+  if (handle.includes("s")) height = origin.height + dy;
+
+  if (width < minSize) {
+    width = minSize;
+    if (handle.includes("w")) x = origin.x + origin.width - minSize;
+  }
+  if (height < minSize) {
+    height = minSize;
+    if (handle.includes("n")) y = origin.y + origin.height - minSize;
+  }
+
+  return { ...origin, x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+}
+
+/**
+ * Snap a moving box to the frame's edges and centre lines. Checks the box's
+ * leading edge, trailing edge and centre against each guide, so a box lines up
+ * whichever part of it you are aiming with.
+ */
+export function snapBox(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  size: DocSize,
+  tolerance: number,
+): { x: number; y: number; guideX: number | null; guideY: number | null } {
+  const axis = (pos: number, extent: number, guides: number[]) => {
+    for (const offset of [0, extent, extent / 2]) {
+      for (const g of guides) {
+        if (Math.abs(pos + offset - g) <= tolerance) return { pos: g - offset, guide: g };
+      }
+    }
+    return { pos, guide: null as number | null };
+  };
+  const gx = axis(x, width, [0, size.width / 2, size.width]);
+  const gy = axis(y, height, [0, size.height / 2, size.height]);
+  return { x: gx.pos, y: gy.pos, guideX: gx.guide, guideY: gy.guide };
+}

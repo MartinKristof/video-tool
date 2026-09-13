@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Player, type PlayerRef } from "@remotion/player";
 import { AbsoluteFill } from "remotion";
 import { EditorComposition } from "@/remotion/EditorComposition";
+import EditorCanvas from "@/components/EditorCanvas";
 import { docDuration, type EditorDoc } from "@/lib/editor-doc";
 
 /**
@@ -18,14 +19,47 @@ import { docDuration, type EditorDoc } from "@/lib/editor-doc";
 export default function EditorPreview({
   doc,
   playerRef,
+  currentFrame = 0,
+  selectedIds,
+  onSelectionChange,
+  onChange,
 }: {
   doc: EditorDoc;
   playerRef?: React.RefObject<PlayerRef | null>;
+  currentFrame?: number;
+  selectedIds?: Set<string>;
+  onSelectionChange?: (next: Set<string>) => void;
+  onChange?: (next: EditorDoc) => void;
 }) {
   const durationInFrames = useMemo(() => docDuration(doc), [doc]);
   const inputProps = useMemo(() => ({ doc }), [doc]);
   const { width, height, fps } = doc.size;
   const isEmpty = doc.tracks.every((t) => t.items.length === 0);
+
+  // The overlay has to sit exactly on the rendered video, so measure the largest
+  // rect that keeps the composition's aspect ratio and fits the available area.
+  // CSS `aspect-ratio` alone doesn't do this reliably when both dimensions are
+  // constrained — the same reason TerminalPreview measures it by hand.
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const ratio = width / height;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return;
+      setBox(r.width / r.height > ratio
+        ? { w: Math.round(r.height * ratio), h: Math.round(r.height) }
+        : { w: Math.round(r.width), h: Math.round(r.width / ratio) });
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [width, height]);
+
+  const canEdit = Boolean(onChange && onSelectionChange && selectedIds);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", position: "relative" }}>
@@ -40,7 +74,8 @@ export default function EditorPreview({
         {durationInFrames}F / {fps}FPS / {(durationInFrames / fps).toFixed(1)}S
       </div>
 
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", background: "#000", padding: 2, minHeight: 0 }}>
+      <div ref={boxRef} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", background: "#000", padding: 2, minHeight: 0, position: "relative" }}>
+        <div style={{ position: "relative", width: box.w || "100%", height: box.h || undefined }}>
         <Player
           ref={playerRef}
           component={EditorComposition}
@@ -49,7 +84,7 @@ export default function EditorPreview({
           compositionHeight={height}
           durationInFrames={durationInFrames}
           fps={fps}
-          style={{ width: "100%", maxHeight: "100%", aspectRatio: `${width} / ${height}` }}
+          style={{ width: "100%", height: "100%" }}
           controls
           loop
           errorFallback={({ error }) => (
@@ -61,6 +96,18 @@ export default function EditorPreview({
             </AbsoluteFill>
           )}
         />
+        {canEdit && box.w > 0 && (
+          <EditorCanvas
+            doc={doc}
+            currentFrame={currentFrame}
+            selectedIds={selectedIds!}
+            onSelectionChange={onSelectionChange!}
+            onChange={onChange!}
+            boxW={box.w}
+            boxH={box.h}
+          />
+        )}
+        </div>
       </div>
 
       {isEmpty && (

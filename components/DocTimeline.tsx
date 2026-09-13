@@ -56,6 +56,9 @@ interface Props {
   /** Source durations in seconds, keyed by the same `path` as mediaFiles. */
   mediaDurations?: Record<string, number>;
   projectId?: string;
+  /** Selection is shared with the canvas, so it lives above both of them. */
+  selectedIds: Set<string>;
+  onSelectionChange: (next: Set<string>) => void;
 }
 
 const ITEM_COLORS: Record<string, string> = {
@@ -76,10 +79,9 @@ const ITEM_ICONS: Record<string, string> = {
 
 export default function DocTimeline({
   doc, onChange, currentFrame, onSeek, onScrubStart, onTogglePlay,
-  mediaFiles, mediaDurations, projectId,
+  mediaFiles, mediaDurations, projectId, selectedIds, onSelectionChange,
 }: Props) {
   const [zoom, setZoom] = useState(1);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [snapLine, setSnapLine] = useState<number | null>(null);
   const [snapOn, setSnapOn] = useState(true);
@@ -112,14 +114,12 @@ export default function DocTimeline({
 
   // ── selection ─────────────────────────────────────────────────────────────
   const selectItem = useCallback((id: string, additive: boolean) => {
-    setSelectedIds((prev) => {
-      if (!additive) return new Set([id]);
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }, []);
-  const deselect = useCallback(() => setSelectedIds(new Set()), []);
+    if (!additive) { onSelectionChange(new Set([id])); return; }
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    onSelectionChange(next);
+  }, [selectedIds, onSelectionChange]);
+  const deselect = useCallback(() => onSelectionChange(new Set()), [onSelectionChange]);
 
   // ── scrubbing ─────────────────────────────────────────────────────────────
   const frameFromClientX = useCallback((clientX: number) => {
@@ -267,6 +267,31 @@ export default function DocTimeline({
     setPickerOpen(false);
   }, [doc, projectId, mediaDurations, fps, currentFrame, commit]);
 
+  /**
+   * Add a text or solid layer on the first track, two seconds long, at the
+   * playhead. Text defaults to Inter — the only licensed face besides GT
+   * Walsheim, so the font picker must not widen beyond those plus Google Fonts.
+   */
+  const addLayer = useCallback((kind: "text" | "solid") => {
+    const trackId = doc.tracks[doc.tracks.length - 1]?.id;
+    if (!trackId) return;
+    const w = Math.round(doc.size.width * 0.6);
+    const h = Math.round(doc.size.height * 0.18);
+    const layout = {
+      x: Math.round((doc.size.width - w) / 2),
+      y: Math.round((doc.size.height - h) / 2),
+      width: w,
+      height: h,
+    };
+    const common = { id: makeId(kind), from: currentFrame, durationInFrames: fps * 2, layout };
+    const item = kind === "text"
+      ? { ...common, type: "text" as const, text: "New text", style: { fontFamily: "Inter, sans-serif", fontSize: Math.round(doc.size.height * 0.09), fontWeight: 700, color: "#F4F4F5", align: "center" as const } }
+      : { ...common, type: "solid" as const, color: "#F86606" };
+    const next = addItem(doc, trackId, item as EditorItem);
+    commit(next);
+    onSelectionChange(new Set([common.id]));
+  }, [doc, currentFrame, fps, commit, onSelectionChange]);
+
   // ── rendering ─────────────────────────────────────────────────────────────
   const ticks = useMemo(() => {
     const step = Math.max(1, Math.round(fps / Math.max(0.25, pxPerFrame * fps / 90)));
@@ -363,6 +388,8 @@ export default function DocTimeline({
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderBottom: "0.5px solid var(--line-1)" }}>
         <span className="mono cap" style={{ fontSize: 9, color: "var(--text-3)" }}>Editor</span>
         <button onClick={() => setPickerOpen((v) => !v)} style={toolBtn}>+ Media</button>
+        <button onClick={() => addLayer("text")} style={toolBtn}>+ Text</button>
+        <button onClick={() => addLayer("solid")} style={toolBtn}>+ Solid</button>
         <button onClick={() => commit(addTrack(doc))} style={toolBtn}>+ Track</button>
         <button onClick={splitAtPlayhead} style={toolBtn} disabled={selectedIds.size !== 1}>Split</button>
         <button onClick={() => deleteSelected(true)} style={toolBtn} disabled={selectedIds.size === 0}>Delete</button>
