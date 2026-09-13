@@ -357,10 +357,14 @@ export default function Timeline({
           c.kind === "audio" ? 2 : c.kind === "video" ? 0 : c.track === "free" ? 3 : 1;
         groups[laneIdx].clips.push({
           key: `${c.id}_${i}`,
-          clipId: c.id,
+          // A bed has no edit id — it is shown so you can see it, not dragged.
+          clipId: c.editable === false ? undefined : c.id,
           colorIndex: i,
           from: c.from,
-          durationInFrames: c.durationInFrames,
+          // Beds run the length of the composition, so read that from the doc
+          // rather than a stored duration that a trim would leave stale.
+          durationInFrames:
+            c.editable === false ? editableDoc.totalDurationInFrames : c.durationInFrames,
           name: c.label,
           startFrom: c.startFrom,
           endAt: c.endAt,

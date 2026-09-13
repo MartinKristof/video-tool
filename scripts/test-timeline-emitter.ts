@@ -245,7 +245,8 @@ for (const id of ids) {
     const re = analyzeEditability(next, fps).doc;
     a(!!re, `${tag}: ${label} stays editable`);
     if (!re) return;
-    a(re.clips.length === expectClips, `${tag}: ${label} clip count ${re.clips.length} === ${expectClips}`);
+    const reCount = re.clips.filter(c => c.editable !== false).length;
+    a(reCount === expectClips, `${tag}: ${label} clip count ${reCount} === ${expectClips}`);
     a(declaredTotal(next, fps) === re.totalDurationInFrames,
       `${tag}: ${label} declared duration ${declaredTotal(next, fps)} === content ${re.totalDurationInFrames}`);
     if (expectTotal != null) {
@@ -257,7 +258,8 @@ for (const id of ids) {
 
   const base = doc.clips.filter(c => c.track === "base").sort((x, y) => x.from - y.from);
   const first = base[0], last = base[base.length - 1];
-  const n = doc.clips.length;
+  // Media beds are shown but never edited, so they don't count toward clip totals.
+  const n = doc.clips.filter(c => c.editable !== false).length;
 
   // Trims are clamped — a TransitionSeries child can't go below its adjacent
   // transition, and a media clip can't read past its source — so assert the

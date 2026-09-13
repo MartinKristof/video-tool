@@ -168,6 +168,47 @@ function findMediaTag(code: string, blockStart: number, blockEnd: number): Media
   return audio;
 }
 
+/**
+ * A media element that sits OUTSIDE every `<Sequence>` — the full-length
+ * voiceover or music bed a composition plays under everything else.
+ *
+ * It has no `from` or `durationInFrames` of its own (it simply runs for the
+ * whole composition), so it can't be positioned or trimmed by patching
+ * attributes. It still has to appear on the timeline: without it, shortening the
+ * video silently leaves the bed running past the end, and there is nothing on
+ * screen to explain why the voiceover no longer lines up.
+ */
+export interface MediaBed {
+  kind: "video" | "audio";
+  src?: string;
+  label: string;
+  tagStart: number;
+  tagEnd: number;
+}
+
+/** Find media elements that are not inside any `<Sequence>` block. */
+export function parseMediaBeds(code: string): MediaBed[] {
+  if (!code || !code.trim()) return [];
+  const covered = parseSequenceBlocks(code, 30).map((b) => [b.blockStart, b.blockEnd] as const);
+  const beds: MediaBed[] = [];
+  const re = /<(OffthreadVideo|Video|Audio)\b[^>]*>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(code)) !== null) {
+    const start = m.index;
+    if (covered.some(([a, b]) => start >= a && start < b)) continue;
+    const srcMatch = /\bsrc=(?:\{[^}]*?["'`]([^"'`]+)["'`][^}]*\}|"([^"]+)")/.exec(m[0]);
+    const src = srcMatch ? srcMatch[1] || srcMatch[2] : undefined;
+    beds.push({
+      kind: m[1] === "Audio" ? "audio" : "video",
+      src,
+      label: src ? extractFilename(src) : m[1],
+      tagStart: start,
+      tagEnd: start + m[0].length,
+    });
+  }
+  return beds;
+}
+
 export function parseSequenceBlocks(code: string, fps: number): SequenceBlock[] {
   if (!code || !code.trim()) return [];
 

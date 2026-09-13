@@ -3,6 +3,7 @@ import {
   parseSequenceBlocks,
   normalizeSeriesToSequences,
   parseTransitionSeries,
+  parseMediaBeds,
   durationWithConstant,
   resolveExprInCode,
   type TransitionChild,
@@ -38,6 +39,14 @@ export interface EditableClip {
    *                  itself, which is why trims here need no ripple.
    */
   position: "explicit" | "implicit";
+  /**
+   * False for a full-length media bed — a voiceover or music track sitting
+   * outside every <Sequence>. It has no position or duration of its own to
+   * patch, so it is shown but not draggable. Showing it matters: otherwise
+   * shortening the video leaves the bed running past the end with nothing on
+   * screen to explain why the voiceover stopped lining up.
+   */
+  editable?: boolean;
   /**
    * Magnetic base track vs free track. The base track is gapless — ripple and
    * reorder re-pack it, as an NLE does. Free tracks (audio beds, captions over
@@ -145,7 +154,7 @@ function docFromTransitionSeries(
   return {
     mode: "patch",
     fps,
-    clips,
+    clips: [...clips, ...bedClips(code, ts.totalDurationInFrames)],
     totalDurationInFrames: ts.totalDurationInFrames,
     originalCode: code,
   };
@@ -211,12 +220,15 @@ export function docFromCode(
     mediaAttrInsertAt: b.mediaAttrInsertAt,
   }));
 
-  const totalDurationInFrames = Math.max(
-    0,
-    ...clips.map((c) => c.from + c.durationInFrames),
-  );
+  const totalDurationInFrames = totalOf(clips);
 
-  return { mode: "patch", fps, clips, totalDurationInFrames, originalCode: source };
+  return {
+    mode: "patch",
+    fps,
+    clips: [...clips, ...bedClips(source, totalDurationInFrames)],
+    totalDurationInFrames,
+    originalCode: source,
+  };
 }
 
 /**
@@ -320,7 +332,30 @@ function setDurationExport(code: string, total: number, fps?: number): string {
 }
 
 function totalOf(clips: EditableClip[]): number {
-  return Math.max(1, ...clips.map((c) => c.from + c.durationInFrames));
+  // Beds span whatever the composition turns out to be, so they must not be
+  // what decides how long it is.
+  const real = clips.filter((c) => c.editable !== false);
+  if (real.length === 0) return 1;
+  return Math.max(1, ...real.map((c) => c.from + c.durationInFrames));
+}
+
+/**
+ * Display-only clips for the media beds playing under the whole composition.
+ * They carry no attribute ranges, so the emitter never writes to them.
+ */
+function bedClips(code: string, total: number): EditableClip[] {
+  return parseMediaBeds(code).map((b, i) => ({
+    id: `bed_${i}`,
+    kind: b.kind,
+    label: b.label,
+    position: "explicit" as const,
+    editable: false,
+    track: "free" as const,
+    src: b.src,
+    from: 0,
+    durationInFrames: Math.max(1, total),
+    sourceRange: { start: b.tagStart, end: b.tagEnd },
+  }));
 }
 
 /**
@@ -408,10 +443,7 @@ export function moveClip(doc: EditableDoc, clipId: string, deltaFrames: number):
   const clips = doc.clips.map((c) =>
     c.id === clipId ? { ...c, from: Math.max(0, c.from + deltaFrames) } : c,
   );
-  const totalDurationInFrames = Math.max(
-    0,
-    ...clips.map((c) => c.from + c.durationInFrames),
-  );
+  const totalDurationInFrames = totalOf(clips);
   return { ...doc, clips, totalDurationInFrames };
 }
 
@@ -428,6 +460,8 @@ function isImplicit(doc: EditableDoc): boolean {
 function reflowImplicit(doc: EditableDoc): EditableDoc {
   let run = 0;
   const clips = doc.clips.map((c) => {
+    // Beds have no slot in the running total; they span whatever the result is.
+    if (c.editable === false) return c;
     // Remotion clamps a negative start to 0 and carries the offset forward
     // (TransitionSeries.js: `if (actualStartFrame < 0) …`). Mirror it so the
     // timeline can't draw a clip before frame 0.
@@ -436,11 +470,7 @@ function reflowImplicit(doc: EditableDoc): EditableDoc {
     run = start + c.durationInFrames - (c.transitionAfter?.durationInFrames ?? 0);
     return nc;
   });
-  return {
-    ...doc,
-    clips,
-    totalDurationInFrames: Math.max(0, ...clips.map((c) => c.from + c.durationInFrames), 0),
-  };
+  return { ...doc, clips, totalDurationInFrames: totalOf(clips) };
 }
 
 /**
@@ -537,9 +567,7 @@ function emitImplicitStructural(
  * stop there rather than produce code that won't render.
  */
 function minImplicitDuration(doc: EditableDoc, clip: EditableClip): number {
-  const ordered = [...doc.clips].sort(
-    (a, b) => (a.sourceRange?.start ?? 0) - (b.sourceRange?.start ?? 0),
-  );
+  const ordered = sourceOrdered(doc);
   const i = ordered.findIndex((c) => c.id === clip.id);
   const before = i > 0 ? ordered[i - 1].transitionAfter?.durationInFrames ?? 0 : 0;
   const after = clip.transitionAfter?.durationInFrames ?? 0;
@@ -548,9 +576,14 @@ function minImplicitDuration(doc: EditableDoc, clip: EditableClip): number {
 
 /** A clip's index in source order — the order the children region is in. */
 function sourceIndex(doc: EditableDoc, clipId: string): number {
-  return [...doc.clips]
-    .sort((a, b) => (a.sourceRange?.start ?? 0) - (b.sourceRange?.start ?? 0))
-    .findIndex((c) => c.id === clipId);
+  return sourceOrdered(doc).findIndex((c) => c.id === clipId);
+}
+
+/** Editable clips in the order they appear in the source. Beds are not blocks. */
+function sourceOrdered(doc: EditableDoc): EditableClip[] {
+  return doc.clips
+    .filter((c) => c.editable !== false)
+    .sort((a, b) => (a.sourceRange?.start ?? 0) - (b.sourceRange?.start ?? 0));
 }
 
 /**
@@ -612,7 +645,7 @@ export function trimClipRight(doc: EditableDoc, clipId: string, deltaFrames: num
   return {
     ...doc,
     clips,
-    totalDurationInFrames: Math.max(0, ...clips.map((c) => c.from + c.durationInFrames)),
+    totalDurationInFrames: totalOf(clips),
   };
 }
 
@@ -661,7 +694,7 @@ export function trimClipLeft(doc: EditableDoc, clipId: string, deltaFrames: numb
   return {
     ...doc,
     clips,
-    totalDurationInFrames: Math.max(0, ...clips.map((c) => c.from + c.durationInFrames)),
+    totalDurationInFrames: totalOf(clips),
   };
 }
 
@@ -711,10 +744,7 @@ export function splitClip(
   // in source order, so index by source position — `doc.clips` may have been
   // re-ordered by a previous reorder/repack and no longer match.
   const reparsed = parseSequenceBlocks(patched, doc.fps);
-  const sourceOrder = [...doc.clips].sort(
-    (a, b) => (a.sourceRange?.start ?? 0) - (b.sourceRange?.start ?? 0),
-  );
-  const splitIdx = sourceOrder.findIndex((c) => c.id === clipId);
+  const splitIdx = sourceIndex(doc, clipId);
   const splitBlock = reparsed[splitIdx];
   if (!splitBlock) return doc;
 
@@ -1010,6 +1040,8 @@ function relayout(
   const relaidFree = doc.clips
     .filter((c) => c.track === "free")
     .map((c) => {
+      // A bed isn't positioned, so nothing shifts it.
+      if (c.editable === false) return c;
       // Ride along with the last base clip starting at or before this one, so
       // music and captions keep their place over the footage.
       let delta = 0;
@@ -1021,11 +1053,7 @@ function relayout(
     });
 
   const clips = [...relaidBase, ...relaidFree];
-  return {
-    ...doc,
-    clips,
-    totalDurationInFrames: Math.max(0, ...clips.map((c) => c.from + c.durationInFrames), 0),
-  };
+  return { ...doc, clips, totalDurationInFrames: totalOf(clips) };
 }
 
 /**
