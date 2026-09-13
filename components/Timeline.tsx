@@ -170,8 +170,10 @@ export default function Timeline({
   }, [code, fps, onCodeChange, editableDoc, durationInFrames]);
 
   // Computed layouts (card+answer per topic, crossfades) don't validate as data
-  // mode, but their driving SEGMENTS array is editable at the topic level. We
-  // correlate each runtime-extracted footage clip to a segment by its source in/out.
+  // mode, but their driving SEGMENTS array is editable at the topic level.
+  // NOTE: positions come from `topicClips` below — pure maths, NOT from the
+  // runtime extractor. No correlation between resolvedClips and segments exists
+  // (v0.1.21 decoupled them because the hidden-Player extraction was racy).
   const segmentArray = useMemo<SegmentArray | null>(() => {
     if (!onCodeChange || editableDoc || dataTimeline) return null;
     return parseSegments(code, fps);
