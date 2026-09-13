@@ -64,18 +64,46 @@ head("adding items — overlap is pushed aside, not rejected");
   a(docDuration(doc) === 180, `duration 180 (got ${docDuration(doc)})`);
 }
 
-head("move is clamped by neighbours");
+head("moving never gets stuck behind a neighbour");
 {
   let doc = base();
   doc = addItem(doc, t0(doc), clip("a", 0, 90));
   doc = addItem(doc, t0(doc), clip("b", 90, 90));
-  doc = moveItem(doc, "b", -1000);
-  a(findItem(doc, "b")!.item.from === 90, "can't slide into the clip before it");
-  doc = moveItem(doc, "a", -1000);
-  a(findItem(doc, "a")!.item.from === 0, "can't go before frame 0");
-  doc = moveItem(doc, "b", 60);
-  a(findItem(doc, "b")!.item.from === 150, "free to move right");
-  a(isValidDoc(doc), "still valid");
+
+  // With the track full from frame 0 there is genuinely nowhere earlier to go,
+  // so the clip stays put rather than overlapping.
+  const left = moveItem(doc, "b", -1000);
+  a(findItem(left, "b")!.item.from === 90, "nowhere to fit earlier, so it holds position");
+  a(isValidDoc(left), "no overlap");
+
+  // Given real room before it, the same drag lands there.
+  let roomy = base();
+  roomy = addItem(roomy, t0(roomy), clip("x", 300, 90));
+  roomy = addItem(roomy, t0(roomy), clip("y", 390, 90));
+  const pulled = moveItem(roomy, "y", -1000);
+  a(findItem(pulled, "y")!.item.from === 0, `drags past its neighbour into free space (got ${findItem(pulled, "y")!.item.from})`);
+  a(isValidDoc(pulled), "no overlap after passing");
+
+  a(findItem(moveItem(doc, "a", -1000), "a")!.item.from === 0, "can't go before frame 0");
+  a(findItem(moveItem(doc, "b", 60), "b")!.item.from === 150, "free space is used directly");
+
+  // The reported bug: a clip wedged between two others with no gap either side.
+  // It must still be draggable — to the nearest place it fits.
+  let wedged = base();
+  wedged = addItem(wedged, t0(wedged), clip("before", 0, 50));
+  wedged = addItem(wedged, t0(wedged), clip("stuck", 90, 150));
+  wedged = addItem(wedged, t0(wedged), clip("after", 240, 100));
+  // It lands where it was dragged — past `after`, which is free ground.
+  const nudged = moveItem(wedged, "stuck", 400);
+  a(findItem(nudged, "stuck")!.item.from === 490,
+    `a wedged clip drags out to open ground (got ${findItem(nudged, "stuck")!.item.from})`);
+  a(isValidDoc(nudged), "still no overlap");
+
+  // Dragging it a little — not past anything — snaps it to the nearest fit in
+  // its own gap rather than refusing to move.
+  const small = moveItem(wedged, "stuck", 30);
+  a(findItem(small, "stuck")!.item.from === 90 && isValidDoc(small),
+    `a short drag with no room stays put rather than overlapping (got ${findItem(small, "stuck")!.item.from})`);
 }
 
 head("trim right — duration and source out-point move together");

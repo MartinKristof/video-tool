@@ -271,6 +271,46 @@ export function itemsAtFrame(doc: EditorDoc, frame: number): EditorItem[] {
 // ── invariants ──────────────────────────────────────────────────────────────
 
 /**
+ * The position closest to `wanted` where an item of `duration` frames fits on
+ * this track without overlapping anything else.
+ *
+ * Dragging is not allowed to be blocked by a neighbour. Clamping to the gap
+ * between the two items either side means a clip wedged against both is stuck
+ * where it is — which is what happened to a snippet dropped between two title
+ * cards. Searching every gap instead means dragging past a neighbour lands the
+ * clip after it, the way an editor should behave, while the no-overlap invariant
+ * still holds.
+ */
+export function findFreeSlot(
+  track: Track,
+  excludeId: string,
+  wanted: number,
+  duration: number,
+): number {
+  const others = track.items
+    .filter((i) => i.id !== excludeId)
+    .sort((a, b) => a.from - b.from);
+  const target = Math.max(0, wanted);
+
+  // Free gaps, in order: before the first item, between each pair, after the last.
+  const gaps: { start: number; end: number }[] = [];
+  let cursor = 0;
+  for (const other of others) {
+    if (other.from > cursor) gaps.push({ start: cursor, end: other.from });
+    cursor = Math.max(cursor, other.from + other.durationInFrames);
+  }
+  gaps.push({ start: cursor, end: Number.POSITIVE_INFINITY });
+
+  let best: number | null = null;
+  for (const gap of gaps) {
+    if (gap.end - gap.start < duration) continue;
+    const placed = Math.max(gap.start, Math.min(gap.end - duration, target));
+    if (best === null || Math.abs(placed - target) < Math.abs(best - target)) best = placed;
+  }
+  return best ?? target;
+}
+
+/**
  * Items in a track may not overlap — that is what keeps trim and ripple
  * unambiguous. Layering is what tracks are for. Returns the room an item has to
  * grow into, bounded by its neighbours.
@@ -391,9 +431,12 @@ export function rippleRemoveItem(doc: EditorDoc, itemId: string): EditorDoc {
 export function moveItem(doc: EditorDoc, itemId: string, deltaFrames: number): EditorDoc {
   const found = findItem(doc, itemId);
   if (!found) return doc;
-  const { min, max } = bounds(found.track, itemId);
-  const want = found.item.from + deltaFrames;
-  const from = Math.max(min, Math.min(max - found.item.durationInFrames, Math.max(0, want)));
+  const from = findFreeSlot(
+    found.track,
+    itemId,
+    found.item.from + deltaFrames,
+    found.item.durationInFrames,
+  );
   return replaceItem(doc, itemId, (i) => ({ ...i, from }));
 }
 
@@ -671,8 +714,10 @@ export function moveItemToTrack(
   if (!found) return doc;
   if (found.track.id === targetTrackId) return moveItem(doc, itemId, from - found.item.from);
   if (!doc.tracks.some((t) => t.id === targetTrackId)) return doc;
-  const moved = { ...found.item, from: Math.max(0, from) };
-  return addItem(removeItem(doc, itemId), targetTrackId, moved);
+  const without = removeItem(doc, itemId);
+  const target = without.tracks.find((t) => t.id === targetTrackId)!;
+  const landing = findFreeSlot(target, itemId, Math.max(0, from), found.item.durationInFrames);
+  return addItem(without, targetTrackId, { ...found.item, from: landing });
 }
 
 /** A copy of an item with a fresh id, so it can be pasted without colliding. */
