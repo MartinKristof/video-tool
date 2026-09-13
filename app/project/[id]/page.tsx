@@ -116,6 +116,10 @@ export default function ProjectEditor() {
   const [docMedia, setDocMedia] = useState<{ name: string; path: string; type: string }[]>([]);
   const [docMediaDurations, setDocMediaDurations] = useState<Record<string, number>>({});
   const lastSavedDocRef = useRef<string>("");
+  // Which editor is on screen for a project that HAS a document. Purely a view
+  // toggle — switching back to code destroys nothing, so trying the editor is
+  // never a one-way door.
+  const [showCodeEditor, setShowCodeEditor] = useState(false);
   const chatRef = useRef<ChatPanelHandle>(null);
   // Bounds automatic error-retry so a persistently-broken generation can't loop
   // the model forever. Reset to 0 whenever a generation lands with no error.
@@ -448,6 +452,8 @@ export default function ProjectEditor() {
     return () => window.removeEventListener("keydown", handleKey);
   }, [forceSave, code, codeHistory, doc, docHistory]);
 
+  const docView = doc && !showCodeEditor ? doc : undefined;
+
   const { durationInFrames, fps: extractedFps, sceneError } = useMemo(() => {
     if (!code || !code.trim()) return { durationInFrames: 250, fps: project?.settings.fps ?? 25, sceneError: undefined };
     // HyperFrames scenes are plain JS (not Remotion) — read duration/fps from
@@ -456,8 +462,8 @@ export default function ProjectEditor() {
       const m = parseSceneMeta(code);
       return { durationInFrames: m.durationInFrames, fps: m.fps, sceneError: undefined };
     }
-    if (doc) {
-      return { durationInFrames: docDuration(doc), fps: doc.size.fps, sceneError: undefined };
+    if (docView) {
+      return { durationInFrames: docDuration(docView), fps: docView.size.fps, sceneError: undefined };
     }
     const result = evalSceneCode(code);
     return {
@@ -465,7 +471,7 @@ export default function ProjectEditor() {
       fps: result?.fps ?? project?.settings.fps ?? 25,
       sceneError: result?.error,
     };
-  }, [code, doc, project?.settings.fps, project?.engine]);
+  }, [code, docView, project?.settings.fps, project?.engine]);
 
   // Poll the preview Player for the current frame so the timeline playhead
   // tracks playback. No-ops when the Player isn't mounted (Terminal / HyperFrames
@@ -672,7 +678,7 @@ export default function ProjectEditor() {
   // to HyperFrames scenes (plain HTML/GSAP, no Sequence model).
   // The visual editor always has a timeline; otherwise it depends on the type.
   const hasTimeline =
-    Boolean(doc) ||
+    Boolean(docView) ||
     (!isHyperframes &&
     (project.animationType === "video" ||
       project.animationType === "animation" ||
@@ -846,6 +852,19 @@ export default function ProjectEditor() {
             Assets
           </Button>
         )}
+        {doc && (
+          <Button
+            variant="outline"
+            size="sm"
+            icon={showCodeEditor ? "layers" : "code"}
+            title={showCodeEditor
+              ? "Switch back to the visual editor"
+              : "Show the original code view. Your editor arrangement is kept — this only changes which editor is on screen."}
+            onClick={() => setShowCodeEditor((v) => !v)}
+          >
+            {showCodeEditor ? "Editor" : "Code view"}
+          </Button>
+        )}
         {!doc && !isTerminalProject && !isHyperframes && (
           <Button
             variant="outline"
@@ -912,8 +931,8 @@ export default function ProjectEditor() {
             >
               <Panel id="preview" defaultSize={hasTimeline ? "50%" : "65%"} minSize="15%">
                 <div style={{ background: "#000", height: "100%", minHeight: 0, minWidth: 0, overflow: "hidden" }}>
-                  {doc ? (
-                    <EditorPreview doc={doc} playerRef={playerRef} />
+                  {docView ? (
+                    <EditorPreview doc={docView} playerRef={playerRef} />
                   ) : isTerminalProject ? (
                     <TerminalPreview
                       projectId={projectId}
@@ -938,9 +957,9 @@ export default function ProjectEditor() {
                   <Separator className="resize-handle resize-handle-horizontal" />
                   <Panel id="timeline" defaultSize="30%" minSize="12%">
                     <div style={{ background: "var(--bg-2)", height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
-                      {doc ? (
+                      {docView ? (
                       <DocTimeline
-                        doc={doc}
+                        doc={docView}
                         onChange={commitDoc}
                         currentFrame={currentFrame}
                         onSeek={seekTo}
