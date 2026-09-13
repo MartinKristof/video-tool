@@ -4,12 +4,29 @@ import { enqueueHyperframesRender } from "@/lib/hyperframes-queue";
 import type { HfFormat } from "@/lib/hyperframes-queue";
 import { getProject } from "@/lib/projects";
 import { resolveLutPath } from "@/lib/luts";
+import { sceneCodeFromDoc } from "@/lib/editor-render";
+import { docDuration } from "@/lib/editor-doc";
 import type { Engine } from "@/lib/types";
 
 export async function POST(request: Request) {
   const body = await request.json();
-  const { sceneId, durationInFrames, fps, width, height, codec, projectId, engine, format, lut } = body;
+  const { sceneId, codec, projectId, engine, format, lut } = body;
+  let { durationInFrames, fps, width, height } = body;
   let code: string = body.code;
+
+  // A document project exports the DOCUMENT, not the legacy code field it still
+  // carries. Prefer the copy the client just sent (the editor saves on a
+  // debounce, so the stored one can lag by a couple of seconds) and fall back to
+  // what is on disk. Length and size come from the document too.
+  const storedDoc = projectId ? getProject(projectId)?.doc : undefined;
+  const doc = body.doc ?? storedDoc;
+  if (doc) {
+    code = sceneCodeFromDoc(doc);
+    durationInFrames = docDuration(doc);
+    fps = doc.size.fps;
+    width = doc.size.width;
+    height = doc.size.height;
+  }
 
   if (!code) {
     return Response.json({ error: "code is required" }, { status: 400 });

@@ -9,6 +9,7 @@ import Input from "@/components/ui/Input";
 import Segmented from "@/components/ui/Segmented";
 import { formatBytes } from "@/lib/format";
 import type { Engine } from "@/lib/types";
+import type { EditorDoc } from "@/lib/editor-doc";
 
 interface RenderPreset {
   name: string;
@@ -51,6 +52,12 @@ interface ExportDialogProps {
   projectName: string;
   projectId?: string;
   engine?: Engine;
+  /**
+   * Present for visual-editor projects. Sent with the render so the export uses
+   * the document currently on screen rather than the copy on disk, which the
+   * editor's debounced save can leave a couple of seconds behind.
+   */
+  doc?: EditorDoc;
 }
 
 export default function ExportDialog({
@@ -64,6 +71,7 @@ export default function ExportDialog({
   projectName,
   projectId,
   engine,
+  doc,
 }: ExportDialogProps) {
   // HyperFrames uses its own format selector (MP4 opaque / WebM · MOV transparent)
   // instead of the Remotion codec list.
@@ -246,7 +254,7 @@ export default function ExportDialog({
       const res = await fetch("/api/render", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, durationInFrames, fps, width, height, codec: isHyperframes ? "h264" : codec, projectId, engine, format: hfFormat, lut: !isHyperframes && codec === "h264" ? lutId : undefined }),
+        body: JSON.stringify({ code, durationInFrames, fps, width, height, codec: isHyperframes ? "h264" : codec, projectId, engine, format: hfFormat, lut: !isHyperframes && codec === "h264" ? lutId : undefined, ...(doc ? { doc } : {}) }),
       });
 
       if (!res.ok) throw new Error("Failed to enqueue render");

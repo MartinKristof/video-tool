@@ -1099,6 +1099,7 @@ export default function ProjectEditor() {
             projectName={project.name}
             projectId={projectId}
             engine={project.engine}
+            doc={doc}
           />
         );
       })()}
