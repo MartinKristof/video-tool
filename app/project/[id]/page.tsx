@@ -875,15 +875,28 @@ export default function ProjectEditor() {
             size="sm"
             icon="layers"
             title="Open this project in the visual editor. An AI interview edit comes in as separate clips you can recut; anything else comes in as one block, with the code left untouched."
-            onClick={() => {
+            onClick={async () => {
               const evaluated = evalSceneCode(code);
               const size = { width, height, fps: evaluated?.fps ?? project.settings.fps };
+
+              // The importer records how long the source file is so the timeline
+              // can show the right slice of its filmstrip on each clip.
+              let sourceDurationSec: number | undefined;
+              try {
+                const probe = await fetch(`/api/media/${projectId}/probe-map`).then((r) => (r.ok ? r.json() : null));
+                const rel = /["\`'](?:\/api\/media\/[^/]+\/)([^"\`']+)["\`']/.exec(code)?.[1];
+                if (rel && probe?.fps?.[rel] && probe?.nbFrames?.[rel]) {
+                  sourceDurationSec = probe.nbFrames[rel] / probe.fps[rel];
+                }
+              } catch {
+                // Filmstrips just won't window; the import itself is unaffected.
+              }
 
               // An edit driven by a topics array carries its own decisions as
               // structured data — which footage, named how — so rebuild those as
               // real clips rather than dropping the whole thing in as one
               // immovable block. Falls back to the block for everything else.
-              const imported = docFromVideoEdit(code, size);
+              const imported = docFromVideoEdit(code, size, { sourceDurationSec });
               if (imported) {
                 commitDoc(imported);
                 const odd = suspiciousSegments(code, size.fps);

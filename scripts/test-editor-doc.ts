@@ -14,7 +14,8 @@ import { docFromVideoEdit, suspiciousSegments } from "../lib/editor-import";
 import {
   addAsset, addItem, addTrack, docDuration, emptyDoc, findItem, isValidDoc,
   makeId, moveItem, removeItem, reorderTrack, rippleRemoveItem, setLayout,
-  captionPageAt, paginateCaptions, resizeLayout, snapBox, splitItem, trimItem, updateItem,
+  captionPageAt, cloneItem, duplicateItem, moveItemToTrack, paginateCaptions,
+  resizeLayout, snapBox, splitItem, trimItem, updateItem,
   type Asset, type CaptionToken, type EditorDoc, type SolidItem, type TextItem, type VideoItem,
 } from "../lib/editor-doc";
 
@@ -309,6 +310,49 @@ const SEGMENTS = [
   a(suspiciousSegments(code, 25, 0.05).length === 0, "threshold is respected");
   const doc = docFromVideoEdit(code, { width: 1920, height: 1080, fps: 25 });
   a(doc !== null && doc.tracks[0].items.length === 3, "the broken topic still imports — it is the user's to fix, not ours to drop");
+}
+
+head("moving a clip between tracks");
+{
+  let doc = base();
+  doc = addTrack(doc, "B");
+  const [ta, tb] = doc.tracks.map((t) => t.id);
+  doc = addItem(doc, ta, clip("a", 0, 90));
+  doc = addItem(doc, ta, clip("b", 90, 90));
+
+  const moved = moveItemToTrack(doc, "b", tb, 200);
+  a(moved.tracks[0].items.length === 1, "left the old track");
+  a(moved.tracks[1].items.length === 1, "landed on the new one");
+  a(findItem(moved, "b")!.item.from === 200, "landed where it was dropped");
+  a(isValidDoc(moved), "still valid");
+
+  // Dropping onto an occupied slot slides it clear rather than refusing.
+  let busy = addItem(doc, tb, clip("c", 0, 120));
+  busy = moveItemToTrack(busy, "b", tb, 0);
+  a(findItem(busy, "b")!.item.from === 120, `pushed past the occupant (got ${findItem(busy, "b")!.item.from})`);
+  a(isValidDoc(busy), "no overlap after the push");
+
+  // Same track is an ordinary move, still clamped by neighbours.
+  const same = moveItemToTrack(doc, "b", ta, 0);
+  a(findItem(same, "b")!.item.from === 90, "moving onto its own track is clamped like a normal move");
+  a(moveItemToTrack(doc, "b", "nope", 0) === doc, "unknown track is a no-op");
+}
+
+head("duplicate and clone");
+{
+  let doc = base();
+  doc = addItem(doc, t0(doc), clip("a", 0, 90, { sourceIn: 5, sourceOut: 8 }));
+  const dup = duplicateItem(doc, "a");
+  const items = dup.tracks[0].items as VideoItem[];
+  a(items.length === 2, "duplicated");
+  a(items[1].from === 90, "sits straight after the original");
+  a(items[1].id !== items[0].id, "gets a fresh id");
+  a(items[1].sourceIn === 5 && items[1].sourceOut === 8, "keeps the source trim");
+  a(isValidDoc(dup), "still valid");
+
+  const copy = cloneItem(items[0], 500);
+  a(copy.id !== items[0].id && copy.from === 500, "clone takes a new id and position");
+  a(duplicateItem(doc, "missing") === doc, "duplicating nothing is a no-op");
 }
 
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);

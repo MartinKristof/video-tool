@@ -644,3 +644,35 @@ export function captionPageAt(pages: CaptionPage[], sec: number): CaptionPage | 
   }
   return null;
 }
+
+/**
+ * Move an item to another track, landing at `from`. Uses the same placement rule
+ * as `addItem`, so dropping a clip roughly where you want it on a busy track
+ * slides it to the first free slot rather than refusing the move.
+ */
+export function moveItemToTrack(
+  doc: EditorDoc,
+  itemId: string,
+  targetTrackId: string,
+  from: number,
+): EditorDoc {
+  const found = findItem(doc, itemId);
+  if (!found) return doc;
+  if (found.track.id === targetTrackId) return moveItem(doc, itemId, from - found.item.from);
+  if (!doc.tracks.some((t) => t.id === targetTrackId)) return doc;
+  const moved = { ...found.item, from: Math.max(0, from) };
+  return addItem(removeItem(doc, itemId), targetTrackId, moved);
+}
+
+/** A copy of an item with a fresh id, so it can be pasted without colliding. */
+export function cloneItem(item: EditorItem, from?: number): EditorItem {
+  return { ...item, id: makeId(item.type), from: from ?? item.from };
+}
+
+/** Duplicate an item onto its own track, immediately after itself. */
+export function duplicateItem(doc: EditorDoc, itemId: string): EditorDoc {
+  const found = findItem(doc, itemId);
+  if (!found) return doc;
+  const copy = cloneItem(found.item, found.item.from + found.item.durationInFrames);
+  return addItem(doc, found.track.id, copy);
+}

@@ -4,8 +4,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Icon from "@/components/ui/Icon";
 import { snapFrame } from "@/lib/editable-timeline";
 import {
-  addItem, addTrack, docDuration, getAsset, makeId, moveItem, removeItem,
-  removeTrack, rippleRemoveItem, snapTargets, splitItem, trimItem,
+  addItem, addTrack, cloneItem, docDuration, duplicateItem, findItem, getAsset,
+  makeId, moveItem, moveItemToTrack, removeItem, removeTrack, rippleRemoveItem,
+  snapTargets, splitItem, trimItem,
   type Asset, type EditorDoc, type EditorItem, type Track,
 } from "@/lib/editor-doc";
 
@@ -88,6 +89,13 @@ export default function DocTimeline({
   const [containerWidth, setContainerWidth] = useState(900);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [captionsBusy, setCaptionsBusy] = useState<string | null>(null);
+  const [clipboard, setClipboard] = useState<EditorItem | null>(null);
+  /** Track lane the pointer is over mid-drag, so a clip can be dropped onto another. */
+  const [hoverTrack, setHoverTrack] = useState<number | null>(null);
+  const hoverRef = useRef<number | null>(null);
+  const tracksRef = useRef<HTMLDivElement>(null);
+  /** Audio peaks per media path, fetched lazily and cached server-side too. */
+  const [peaks, setPeaks] = useState<Record<string, number[]>>({});
   const deltaRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const rulerRef = useRef<HTMLDivElement>(null);
@@ -166,6 +174,14 @@ export default function DocTimeline({
     if (!dragState) return;
     const s = dragState;
     function onMove(e: PointerEvent) {
+      // Which lane is the pointer over? Lanes are a fixed height, stacked.
+      if (s.mode === "move" && tracksRef.current) {
+        const r = tracksRef.current.getBoundingClientRect();
+        const idx = Math.floor((e.clientY - r.top) / TRACK_H);
+        const valid = idx >= 0 && idx < doc.tracks.length ? idx : null;
+        hoverRef.current = valid;
+        setHoverTrack(valid);
+      }
       const raw = Math.round((e.clientX - s.startX) / s.pxPerFrame);
       let delta = raw;
       let snapped: number | null = null;
@@ -182,11 +198,25 @@ export default function DocTimeline({
     }
     function onUp() {
       const delta = deltaRef.current;
+      const lane = hoverRef.current;
       setSnapLine(null);
       setDragState(null);
-      if (delta === 0) return;
-      if (s.mode === "move") commit(moveItem(doc, s.itemId, delta));
-      else commit(trimItem(doc, s.itemId, s.mode === "trim-left" ? "left" : "right", delta, fps));
+      setHoverTrack(null);
+      hoverRef.current = null;
+
+      if (s.mode === "move") {
+        const current = findItem(doc, s.itemId);
+        const target = lane != null ? doc.tracks[lane] : null;
+        if (target && current && target.id !== current.track.id) {
+          commit(moveItemToTrack(doc, s.itemId, target.id, s.originalFrom + delta));
+          return;
+        }
+        if (delta !== 0) commit(moveItem(doc, s.itemId, delta));
+        return;
+      }
+      if (delta !== 0) {
+        commit(trimItem(doc, s.itemId, s.mode === "trim-left" ? "left" : "right", delta, fps));
+      }
     }
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -217,7 +247,29 @@ export default function DocTimeline({
     function onKey(e: KeyboardEvent) {
       const el = document.activeElement;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.closest(".monaco-editor"))) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Cmd/Ctrl combos: handle the clipboard here, and let everything else
+      // (notably undo/redo) fall through to the page.
+      if (e.metaKey || e.ctrlKey) {
+        const id = [...selectedIds][0];
+        if (e.key === "c" && id) {
+          const found = findItem(doc, id);
+          if (found) { e.preventDefault(); setClipboard(found.item); }
+        } else if (e.key === "d" && id) {
+          e.preventDefault();
+          commit(duplicateItem(doc, id));
+        } else if (e.key === "v" && clipboard) {
+          e.preventDefault();
+          const home = findItem(doc, clipboard.id);
+          const trackId = home?.track.id ?? doc.tracks[0]?.id;
+          if (trackId) {
+            const copy = cloneItem(clipboard, currentFrame);
+            commit(addItem(doc, trackId, copy));
+            onSelectionChange(new Set([copy.id]));
+          }
+        }
+        return;
+      }
+      if (e.altKey) return;
       if (e.key === " ") { e.preventDefault(); onTogglePlay?.(); }
       else if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); deleteSelected(true); }
       else if (e.key === "s" || e.key === "S") { e.preventDefault(); splitAtPlayhead(); }
@@ -229,7 +281,8 @@ export default function DocTimeline({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [currentFrame, total, onSeek, onTogglePlay, deleteSelected, splitAtPlayhead, deselect]);
+  }, [currentFrame, total, onSeek, onTogglePlay, deleteSelected, splitAtPlayhead, deselect,
+      doc, selectedIds, clipboard, commit, onSelectionChange]);
 
   // ⌘/Ctrl-scroll to zoom, matching the other timeline.
   useEffect(() => {
@@ -351,6 +404,35 @@ export default function DocTimeline({
     }
   }, [doc, projectId, currentFrame, fps, commit, onSelectionChange]);
 
+  /** Media path relative to the project's media folder, as the API expects. */
+  const relPath = useCallback(
+    (src: string) => src.replace(`/api/media/${projectId}/`, ""),
+    [projectId],
+  );
+
+  // Pull peaks for every audio clip on screen. The server caches them beside the
+  // media, so this is a one-off cost per file and instant afterwards.
+  useEffect(() => {
+    if (!projectId) return;
+    const wanted = new Set<string>();
+    for (const track of doc.tracks) {
+      for (const item of track.items) {
+        if (item.type !== "audio") continue;
+        const asset = getAsset(doc, item.assetId);
+        if (asset?.src.startsWith(`/api/media/${projectId}/`)) wanted.add(relPath(asset.src));
+      }
+    }
+    for (const file of wanted) {
+      if (peaks[file]) continue;
+      fetch(`/api/media/${projectId}/peaks?file=${encodeURIComponent(file)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (Array.isArray(d?.peaks)) setPeaks((prev) => ({ ...prev, [file]: d.peaks }));
+        })
+        .catch(() => {});
+    }
+  }, [doc, projectId, peaks, relPath]);
+
   // ── rendering ─────────────────────────────────────────────────────────────
   const ticks = useMemo(() => {
     const step = Math.max(1, Math.round(fps / Math.max(0.25, pxPerFrame * fps / 90)));
@@ -367,8 +449,14 @@ export default function DocTimeline({
     return { from: dragState.originalFrom + d, dur: Math.max(1, dragState.originalDuration - d) };
   };
 
-  const renderTrack = (track: Track) => (
-    <div key={track.id} style={{ display: "flex", height: TRACK_H, borderBottom: "0.5px solid var(--line-1)" }}>
+  const renderTrack = (track: Track, laneIndex: number) => (
+    <div
+      key={track.id}
+      style={{
+        display: "flex", height: TRACK_H, borderBottom: "0.5px solid var(--line-1)",
+        background: hoverTrack === laneIndex && dragState?.mode === "move" ? "var(--bg-3)" : undefined,
+      }}
+    >
       <div
         style={{
           width: LABEL_W, flexShrink: 0, display: "flex", alignItems: "center", gap: 5,
@@ -409,12 +497,40 @@ export default function DocTimeline({
           const selected = selectedIds.has(item.id);
           const asset = "assetId" in item ? getAsset(doc, (item as { assetId: string }).assetId) : undefined;
           const label = item.type === "text" ? (item as { text: string }).text : asset?.name ?? item.type;
+          const clipW = Math.max(2, g.dur * pxPerFrame);
+
+          // Filmstrip: map the clip's source window onto the strip image.
+          let strip: { url: string; widthPx: number; offsetPx: number } | null = null;
+          if (item.type === "video" && asset?.durationSec && projectId && asset.src.startsWith(`/api/media/${projectId}/`)) {
+            const inSec = (item as { sourceIn?: number }).sourceIn ?? 0;
+            const outSec = (item as { sourceOut?: number }).sourceOut ?? asset.durationSec;
+            const frac = Math.max(0.0001, (outSec - inSec) / asset.durationSec);
+            const widthPx = clipW / frac;
+            strip = {
+              url: `/api/media/${projectId}/filmstrip?file=${encodeURIComponent(relPath(asset.src))}`,
+              widthPx,
+              offsetPx: (inSec / asset.durationSec) * widthPx,
+            };
+          }
+
+          // Waveform: slice the peaks to the same source window.
+          let wave: number[] | null = null;
+          if (item.type === "audio" && asset?.durationSec && projectId) {
+            const all = peaks[relPath(asset.src)];
+            if (all?.length) {
+              const inSec = (item as { sourceIn?: number }).sourceIn ?? 0;
+              const outSec = (item as { sourceOut?: number }).sourceOut ?? asset.durationSec;
+              const a0 = Math.floor((inSec / asset.durationSec) * all.length);
+              const a1 = Math.ceil((outSec / asset.durationSec) * all.length);
+              wave = all.slice(Math.max(0, a0), Math.min(all.length, Math.max(a0 + 2, a1)));
+            }
+          }
           return (
             <div
               key={item.id}
               onPointerDown={(e) => beginDrag(e, item, "move")}
               style={{
-                position: "absolute", left: g.from * pxPerFrame, width: Math.max(2, g.dur * pxPerFrame),
+                position: "absolute", left: g.from * pxPerFrame, width: clipW,
                 top: 4, height: TRACK_H - 9, borderRadius: 3, cursor: "grab",
                 background: ITEM_COLORS[item.type] ?? "var(--accent)",
                 opacity: track.hidden ? 0.35 : 0.9,
@@ -422,8 +538,40 @@ export default function DocTimeline({
                 display: "flex", alignItems: "center", gap: 4, padding: "0 6px", overflow: "hidden",
               }}
             >
-              <Icon name={ITEM_ICONS[item.type] ?? "layers"} size={10} style={{ color: "rgba(0,0,0,0.6)", flexShrink: 0 }} />
-              <span className="mono" style={{ fontSize: 9, color: "rgba(0,0,0,0.75)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {strip && (
+                <div
+                  aria-hidden
+                  style={{
+                    position: "absolute", inset: 0, borderRadius: 3, opacity: 0.8,
+                    backgroundImage: `url(${strip.url})`,
+                    backgroundRepeat: "no-repeat",
+                    // The strip covers the WHOLE source file; show only the window
+                    // this clip is trimmed to, so the thumbnails under a trimmed
+                    // clip are the frames it actually plays.
+                    backgroundSize: `${strip.widthPx}px 100%`,
+                    backgroundPosition: `${-strip.offsetPx}px center`,
+                  }}
+                />
+              )}
+              {wave && (
+                <svg
+                  aria-hidden
+                  viewBox={`0 0 ${wave.length} 100`}
+                  preserveAspectRatio="none"
+                  style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.55 }}
+                >
+                  <polyline
+                    points={wave.map((v, i) => `${i},${50 - v * 48}`).join(" ")}
+                    fill="none" stroke="rgba(0,0,0,0.8)" strokeWidth={1}
+                  />
+                  <polyline
+                    points={wave.map((v, i) => `${i},${50 + v * 48}`).join(" ")}
+                    fill="none" stroke="rgba(0,0,0,0.8)" strokeWidth={1}
+                  />
+                </svg>
+              )}
+              <Icon name={ITEM_ICONS[item.type] ?? "layers"} size={10} style={{ color: "rgba(0,0,0,0.6)", flexShrink: 0, position: "relative" }} />
+              <span className="mono" style={{ fontSize: 9, color: "rgba(0,0,0,0.75)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", position: "relative", textShadow: "0 1px 2px rgba(255,255,255,0.4)" }}>
                 {label}
               </span>
               <div
@@ -509,7 +657,9 @@ export default function DocTimeline({
           </div>
         </div>
 
-        <div style={{ width: LABEL_W + contentW }}>{doc.tracks.map(renderTrack)}</div>
+        <div ref={tracksRef} style={{ width: LABEL_W + contentW }}>
+          {doc.tracks.map((t, i) => renderTrack(t, i))}
+        </div>
 
         {/* playhead + snap guide, spanning ruler and tracks */}
         <div style={{ position: "absolute", left: LABEL_W + currentFrame * pxPerFrame, top: 0, bottom: 0, width: 1, background: "var(--accent)", pointerEvents: "none", zIndex: 5 }} />

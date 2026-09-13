@@ -22,7 +22,7 @@ import {
 export function docFromVideoEdit(
   code: string,
   size: DocSize,
-  opts: { titleSeconds?: number } = {},
+  opts: { titleSeconds?: number; sourceDurationSec?: number } = {},
 ): EditorDoc | null {
   const segments = parseSegments(code, size.fps);
   if (!segments || segments.segments.length === 0) return null;
@@ -37,6 +37,9 @@ export function docFromVideoEdit(
     kind: "video",
     src,
     name: src.split("/").pop() ?? "footage",
+    // Needed for the timeline to window a filmstrip onto the part of the source a
+    // clip is trimmed to; without it clips show no thumbnails.
+    durationSec: opts.sourceDurationSec,
   };
 
   const titleFrames = Math.round((opts.titleSeconds ?? 2) * size.fps);
