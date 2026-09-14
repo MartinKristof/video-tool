@@ -15,6 +15,7 @@ import TerminalPreview from "@/components/TerminalPreview";
 import ConvertAspectRatioButton from "@/components/ConvertAspectRatioButton";
 import Timeline from "@/components/Timeline";
 import { evalSceneCode } from "@/remotion/DynamicScene";
+import { sceneFramesAtFps } from "@/lib/scene-eval";
 import type { Project, ChatMessage, TerminalAnnotations, StyleMode, TopicCardStyle, TransitionStyle } from "@/lib/types";
 import { getProjectSize } from "@/lib/types";
 import { buildTerminalExportPlan } from "@/lib/terminal-export";
@@ -623,7 +624,13 @@ export default function ProjectEditor() {
       type: "scene",
       id: makeId("snippet"),
       from: currentFrame,
-      durationInFrames: evaluated?.durationInFrames ?? doc.size.fps * 3,
+      // A scene authored at 25fps needs MORE frames in a 30fps document to play
+      // to its end — inside EditorComposition it is driven by the document's
+      // rate, not its own. Taking the raw number cut every 25fps snippet 20%
+      // short (LowerThird: 775 frames instead of 930).
+      durationInFrames: evaluated
+        ? sceneFramesAtFps({ durationInFrames: evaluated.durationInFrames, fps: evaluated.fps }, doc.size.fps)
+        : doc.size.fps * 3,
       layout: fullFrameLayout(doc.size),
       code: rendered,
       // Keep the snippet's identity and the values it was built from, so its
@@ -1287,8 +1294,15 @@ export default function ProjectEditor() {
           onClose={() => setEditingSnippetId(null)}
           onSave={(nextCode, values) => {
             if (!editingSnippetId) return;
+            // Changing a parameter can change how long the scene runs (PromptBox's
+            // typing seconds, AiChat's logo flag), so the block has to be re-timed
+            // with it — otherwise the animation and its slot disagree.
+            const re = evalSceneCode(nextCode);
             commitDoc(updateItem<SceneItem>(docView, editingSnippetId, {
               code: nextCode,
+              ...(re
+                ? { durationInFrames: sceneFramesAtFps({ durationInFrames: re.durationInFrames, fps: re.fps }, docView.size.fps) }
+                : {}),
               snippet: { id: findItem(docView, editingSnippetId)?.item.type === "scene"
                 ? (findItem(docView, editingSnippetId)!.item as SceneItem).snippet!.id
                 : "", values },

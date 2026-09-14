@@ -24,6 +24,9 @@ import {
 } from "../lib/editor-transcript";
 import { splitItem } from "../lib/editor-doc";
 import type { TranscriptWord } from "../lib/transcribe";
+import fs from "fs";
+import path from "path";
+import { sceneFramesAtFps, sceneMeta } from "../lib/scene-eval";
 
 let pass = 0, fail = 0;
 const a = (c: boolean, m: string) => { if (c) pass++; else { fail++; console.log("  FAIL: " + m); } };
@@ -449,6 +452,39 @@ head("cutting through a branded scene block does not restart it");
     `the second resumes PAST the cut at frame 70, not from 0 (got ${pieces[1].sourceOffsetFrames})`,
   );
   a(pieces[1].from === 40, "and sits flush against the first once the hole closes");
+}
+
+head("every branded scene reports its real length, computed ones included");
+{
+  // A regex over `export const durationInFrames = <digits>` silently misses the
+  // three scenes that COMPUTE their length, handing back a 250 fallback — for
+  // PromptBox that is 90 vs 250, a 2.8x error and a six-second black tail. And
+  // those constants are snippet PARAMETERS, so no static table can be right
+  // either: the length has to come from the code after substitution.
+  const dir = path.join(process.cwd(), "remotion", "scenes", "branded");
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith(".tsx"));
+  a(files.length > 20, `found the branded library (${files.length} scenes)`);
+
+  let fellBack = 0;
+  for (const f of files) {
+    const meta = sceneMeta(fs.readFileSync(path.join(dir, f), "utf-8"));
+    if (meta.durationInFrames === 250) fellBack++;
+    a(meta.durationInFrames > 0 && meta.fps > 0, `${f} resolves a usable length`);
+  }
+  a(fellBack === 0, `no scene falls back to 250 (got ${fellBack})`);
+
+  const computed: [string, number][] = [["PromptBox", 90], ["AiChat", 375], ["Years", 275]];
+  for (const [name, expected] of computed) {
+    const meta = sceneMeta(fs.readFileSync(path.join(dir, `${name}.tsx`), "utf-8"));
+    a(meta.durationInFrames === expected, `${name} computes ${expected} (got ${meta.durationInFrames})`);
+  }
+
+  // A scene is driven by the DOCUMENT's rate once embedded, so a 25fps scene
+  // needs proportionally more frames in a 30fps document or it is cut short.
+  a(sceneFramesAtFps({ durationInFrames: 775, fps: 25 }, 30) === 930, "775f at 25fps becomes 930f at 30fps");
+  a(sceneFramesAtFps({ durationInFrames: 150, fps: 30 }, 30) === 150, "a matching rate is left alone");
+  a(sceneFramesAtFps({ durationInFrames: 100, fps: 30 }, 25) === 83, "and it shortens the other way");
+  a(sceneFramesAtFps({ durationInFrames: 60, fps: 0 }, 30) === 60, "a missing rate falls through rather than dividing by zero");
 }
 
 head("an unknown tool is an error, not a crash");
