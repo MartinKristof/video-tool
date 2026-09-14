@@ -141,7 +141,8 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function ChatPanel
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatHistory, isGenerating]);
+    // streamingContent too, or the view stops following once the prose starts.
+  }, [chatHistory, isGenerating, streamingContent]);
 
   useEffect(() => {
     if (!svgPickerOpen) return;
@@ -675,7 +676,30 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function ChatPanel
                 animation: "vt-dot-fade 1.4s ease-in-out .4s infinite",
               }}
             />
-            <span style={{ marginLeft: 4 }}>Thinking...</span>
+            <span style={{ marginLeft: 4 }}>{streamingContent.trim() ? "Working…" : "Thinking…"}</span>
+          </div>
+        )}
+
+        {/*
+          What the AI is saying WHILE it works. It was being accumulated and
+          thrown away, so a ninety-second timeline edit showed three dots and
+          nothing else — you could not tell whether it had understood you, was
+          part-way through, or had wedged.
+          Only on the timeline path: the /api/generate stream is mostly a TSX
+          file, and streaming a scene file into the chat would be noise.
+        */}
+        {isGenerating && doc && streamingContent.trim() && (
+          <div
+            style={{
+              marginTop: 6,
+              paddingLeft: 24,
+              fontSize: 12,
+              lineHeight: 1.5,
+              color: "var(--text-2)",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {streamingContent.trim()}
           </div>
         )}
 
