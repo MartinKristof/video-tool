@@ -5,9 +5,9 @@ import Icon from "@/components/ui/Icon";
 import { snapFrame } from "@/lib/editable-timeline";
 import type { AnimationPreset } from "@/lib/editor-effects";
 import {
-  addItem, addTrack, cloneItem, docDuration, duplicateItem, findItem, getAsset,
+  addItem, addTrack, cloneItem, docDuration, duplicateItem, findItem, getAsset, hasRoomAt,
   makeId, moveItem, moveItemToTrack, removeItem, removeTrack, rippleRemoveItem,
-  snapTargets, splitItem, trimItem, updateItem,
+  snapTargets, splitItem, trackWithRoomAt, trimItem, updateItem,
   type Asset, type EditorDoc, type EditorItem, type Track,
 } from "@/lib/editor-doc";
 
@@ -321,7 +321,13 @@ export default function DocTimeline({
       ...(kind === "video" || kind === "audio" ? { sourceIn: 0, sourceOut: durationSec } : {}),
     } as EditorItem;
     const withAsset = existing ? doc : { ...doc, assets: [...doc.assets, asset] };
-    commit(addItem(withAsset, trackId, item));
+    const at = atFrame ?? currentFrame;
+    // Prefer the track asked for, but don't shunt the clip to the end of the
+    // video just because that track is busy where the playhead is.
+    const host = hasRoomAt(withAsset.tracks.find((t) => t.id === trackId)!, at, frames)
+      ? { doc: withAsset, trackId }
+      : trackWithRoomAt(withAsset, at, frames);
+    commit(addItem(host.doc, host.trackId, item));
     setPickerOpen(false);
   }, [doc, projectId, mediaDurations, fps, currentFrame, commit]);
 
@@ -331,8 +337,6 @@ export default function DocTimeline({
    * Walsheim, so the font picker must not widen beyond those plus Google Fonts.
    */
   const addLayer = useCallback((kind: "text" | "solid") => {
-    const trackId = doc.tracks[doc.tracks.length - 1]?.id;
-    if (!trackId) return;
     const w = Math.round(doc.size.width * 0.6);
     const h = Math.round(doc.size.height * 0.18);
     const layout = {
@@ -345,8 +349,9 @@ export default function DocTimeline({
     const item = kind === "text"
       ? { ...common, type: "text" as const, text: "New text", style: { fontFamily: "Inter, sans-serif", fontSize: Math.round(doc.size.height * 0.09), fontWeight: 700, color: "#F4F4F5", align: "center" as const } }
       : { ...common, type: "solid" as const, color: "#F86606" };
-    const next = addItem(doc, trackId, item as EditorItem);
-    commit(next);
+    // Land under the playhead, adding a track if every existing one is busy there.
+    const { doc: host, trackId } = trackWithRoomAt(doc, currentFrame, fps * 2);
+    commit(addItem(host, trackId, item as EditorItem));
     onSelectionChange(new Set([common.id]));
   }, [doc, currentFrame, fps, commit, onSelectionChange]);
 

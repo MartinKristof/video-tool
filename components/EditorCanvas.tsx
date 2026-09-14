@@ -1,7 +1,10 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { itemsAtFrame, resizeLayout, setLayout, snapBox, type EditorDoc, type EditorItem, type ItemLayout, type ResizeHandle } from "@/lib/editor-doc";
+import {
+  itemsAtFrame, resizeLayout, setLayout, snapBox, updateItem,
+  type EditorDoc, type EditorItem, type ItemLayout, type ResizeHandle, type TextItem,
+} from "@/lib/editor-doc";
 
 /**
  * Direct manipulation over the preview: click to select, drag to move, handles
@@ -53,6 +56,8 @@ export default function EditorCanvas({
   boxH: number;
 }) {
   const [drag, setDrag] = useState<DragState | null>(null);
+  /** Text item being edited in place, and its working value. */
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [preview, setPreview] = useState<ItemLayout | null>(null);
   const [guides, setGuides] = useState<{ x: number | null; y: number | null }>({ x: null, y: null });
   const rootRef = useRef<HTMLDivElement>(null);
@@ -62,6 +67,7 @@ export default function EditorCanvas({
   const visible = useMemo(() => itemsAtFrame(doc, currentFrame), [doc, currentFrame]);
 
   const begin = useCallback((e: React.PointerEvent, item: EditorItem, handle: Handle | null) => {
+    if (editing?.id === item.id) return; // let the caret take the pointer
     e.preventDefault();
     e.stopPropagation();
     onSelectionChange(e.shiftKey || e.metaKey || e.ctrlKey
@@ -70,7 +76,7 @@ export default function EditorCanvas({
     latest.current = { layout: item.layout, itemId: item.id };
     setPreview(item.layout);
     setDrag({ itemId: item.id, handle, startX: e.clientX, startY: e.clientY, origin: item.layout, scale });
-  }, [scale, selectedIds, onSelectionChange]);
+  }, [scale, selectedIds, onSelectionChange, editing]);
 
   useEffect(() => {
     if (!drag) return;
@@ -141,6 +147,10 @@ export default function EditorCanvas({
     top: l.y * scale,
     width: l.width * scale,
     height: l.height * scale,
+    // The selection box has to sit on the item as RENDERED, so it turns with it.
+    // Un-rotated handles on rotated content are unusable — you can't tell which
+    // corner you're grabbing.
+    transform: l.rotation ? `rotate(${l.rotation}deg)` : undefined,
   });
 
   return (
@@ -157,14 +167,59 @@ export default function EditorCanvas({
           <div
             key={item.id}
             onPointerDown={(e) => begin(e, item, null)}
+            onDoubleClick={(e) => {
+              // Editing the words where you can see them beats hunting for a
+              // field in a side panel.
+              if (item.type !== "text") return;
+              e.stopPropagation();
+              setEditing({ id: item.id, text: (item as TextItem).text });
+            }}
             style={{
-              position: "absolute", ...box, cursor: "move",
+              position: "absolute", ...box, cursor: item.type === "text" ? "text" : "move",
               outline: selected ? "1.5px solid var(--accent)" : "1px dashed rgba(255,255,255,0.25)",
               outlineOffset: 0,
               background: "transparent",
             }}
           >
-            {selected && HANDLES.map((h) => (
+            {editing?.id === item.id && (
+              <textarea
+                autoFocus
+                value={editing.text}
+                onChange={(ev) => setEditing({ id: item.id, text: ev.target.value })}
+                onPointerDown={(ev) => ev.stopPropagation()}
+                onBlur={() => {
+                  onChange(updateItem<TextItem>(doc, item.id, { text: editing.text }));
+                  setEditing(null);
+                }}
+                onKeyDown={(ev) => {
+                  // Enter commits; Shift+Enter is a new line, as in every editor.
+                  if (ev.key === "Enter" && !ev.shiftKey) {
+                    ev.preventDefault();
+                    onChange(updateItem<TextItem>(doc, item.id, { text: editing.text }));
+                    setEditing(null);
+                  } else if (ev.key === "Escape") {
+                    ev.preventDefault();
+                    setEditing(null);
+                  }
+                  ev.stopPropagation();
+                }}
+                style={{
+                  position: "absolute", inset: 0, width: "100%", height: "100%",
+                  // Match the rendered text so editing looks like the result.
+                  background: "rgba(0,0,0,0.45)",
+                  border: "1.5px solid var(--accent)",
+                  color: (item as TextItem).style.color,
+                  fontFamily: (item as TextItem).style.fontFamily,
+                  fontSize: (item as TextItem).style.fontSize * scale,
+                  fontWeight: (item as TextItem).style.fontWeight ?? 400,
+                  lineHeight: (item as TextItem).style.lineHeight ?? 1.2,
+                  textAlign: (item as TextItem).style.align ?? "left",
+                  padding: 0, margin: 0, resize: "none", outline: "none",
+                  overflow: "hidden", boxSizing: "border-box",
+                }}
+              />
+            )}
+            {selected && !editing && HANDLES.map((h) => (
               <div
                 key={h.id}
                 onPointerDown={(e) => begin(e, item, h.id)}

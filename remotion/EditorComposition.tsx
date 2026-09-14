@@ -151,11 +151,24 @@ const TextLayer: React.FC<{ item: TextItem }> = ({ item }) => {
 
   // A typewriter is per-CHARACTER — never a mask sweep with a feathered edge,
   // which reads as a wipe rather than typing.
+  //
+  // Every character is rendered and the untyped ones are simply invisible,
+  // rather than slicing the string. Slicing re-lays the text out on every frame,
+  // so centred or right-aligned text grows outwards from its anchor instead of
+  // typing left to right — which is not what typing looks like. Keeping the full
+  // string reserves the final layout, so characters appear in reading order
+  // whatever the alignment.
   if (preset === "type") {
-    const shown = item.text.slice(0, visibleCharacters(item.text, inProgress));
+    const typed = visibleCharacters(item.text, inProgress);
     return (
       <div style={{ ...layoutStyle(item.layout), display: "flex", alignItems: "center" }}>
-        <div style={body}>{shown}</div>
+        <div style={body}>
+          {item.text.split("").map((char, i) => (
+            <span key={i} style={{ opacity: i < typed ? 1 : 0 }}>
+              {char}
+            </span>
+          ))}
+        </div>
       </div>
     );
   }

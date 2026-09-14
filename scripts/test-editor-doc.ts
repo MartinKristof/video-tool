@@ -13,12 +13,13 @@ import path from "path";
 import { docFromVideoEdit, suspiciousSegments } from "../lib/editor-import";
 import { ANIMATION_PRESETS, animationFrames, presetStyle, presetsFor, visibleCharacters, wordProgress } from "../lib/editor-effects";
 import { scrubValue } from "../components/ui/ScrubNumber";
+import { timecode } from "../components/EditorPlayerControls";
 import { evalSceneCode } from "../remotion/DynamicScene";
 import {
   addAsset, addItem, addTrack, docDuration, emptyDoc, findItem, isValidDoc,
   makeId, moveItem, removeItem, reorderTrack, rippleRemoveItem, setLayout,
   captionPageAt, cloneItem, duplicateItem, moveItemToTrack, paginateCaptions,
-  resizeLayout, snapBox, splitItem, trimItem, updateItem,
+  hasRoomAt, resizeLayout, snapBox, splitItem, trackWithRoomAt, trimItem, updateItem,
   type Asset, type CaptionToken, type EditorDoc, type SolidItem, type TextItem, type VideoItem,
 } from "../lib/editor-doc";
 
@@ -487,6 +488,44 @@ head("scrubbable number maths");
   a(scrubValue(10, -100, 1, {}, { min: 0 }) === 0, "clamped at the minimum");
   a(scrubValue(10, 100, 1, {}, { max: 50 }) === 50, "clamped at the maximum");
   a(scrubValue(10, 0, 1) === 10, "no movement, no change");
+}
+
+head("a new layer lands under the playhead");
+{
+  let doc = base();
+  doc = addItem(doc, t0(doc), clip("a", 0, 300));
+
+  // The playhead sits over an existing clip, so the only track is busy there.
+  a(!hasRoomAt(doc.tracks[0], 100, 60), "the track is busy at the playhead");
+  const grown = trackWithRoomAt(doc, 100, 60);
+  a(grown.doc.tracks.length === 2, "a track is added rather than shunting the layer to the end");
+  a(grown.trackId === grown.doc.tracks[1].id, "and it targets the new track");
+  a(hasRoomAt(grown.doc.tracks[1], 100, 60), "which has room at the playhead");
+
+  // With room available, no track is added.
+  const roomy = trackWithRoomAt(doc, 400, 60);
+  a(roomy.doc.tracks.length === 1, "existing space is used, no new track");
+  a(roomy.trackId === doc.tracks[0].id, "on the track that had room");
+
+  // Exact-fit gaps count as room, and touching edges don't overlap.
+  let gap = base();
+  gap = addItem(gap, t0(gap), clip("x", 0, 50));
+  gap = addItem(gap, t0(gap), clip("y", 110, 50));
+  a(hasRoomAt(gap.tracks[0], 50, 60), "a gap that fits exactly is room");
+  a(!hasRoomAt(gap.tracks[0], 50, 61), "one frame too long is not");
+  a(hasRoomAt(gap.tracks[0], 160, 10), "after the last clip is room");
+}
+
+head("viewer timecode");
+{
+  a(timecode(0, 25) === "00:00:00:00", "zero");
+  a(timecode(24, 25) === "00:00:00:24", "last frame of the first second");
+  a(timecode(25, 25) === "00:00:01:00", "rolls over to seconds");
+  a(timecode(25 * 60, 25) === "00:01:00:00", "rolls over to minutes");
+  a(timecode(25 * 3600, 25) === "01:00:00:00", "rolls over to hours");
+  a(timecode(917, 25) === "00:00:36:17", `matches an editor's readout (got ${timecode(917, 25)})`);
+  a(timecode(-5, 25) === "00:00:00:00", "never negative");
+  a(timecode(30, 0) === "00:00:01:05", "survives a zero fps rather than dividing by it");
 }
 
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);

@@ -5,6 +5,7 @@ import { Player, type PlayerRef } from "@remotion/player";
 import { AbsoluteFill } from "remotion";
 import { EditorComposition } from "@/remotion/EditorComposition";
 import EditorCanvas from "@/components/EditorCanvas";
+import EditorPlayerControls from "@/components/EditorPlayerControls";
 import { docDuration, type EditorDoc } from "@/lib/editor-doc";
 
 /**
@@ -23,13 +24,19 @@ export default function EditorPreview({
   selectedIds,
   onSelectionChange,
   onChange,
+  isPlaying,
+  onSeek,
+  onTogglePlay,
 }: {
   doc: EditorDoc;
   playerRef?: React.RefObject<PlayerRef | null>;
   currentFrame?: number;
   selectedIds?: Set<string>;
   onSelectionChange?: (next: Set<string>) => void;
-  onChange?: (next: EditorDoc) => void;
+  onChange?: (next: EditorDoc, opts?: { transient?: boolean }) => void;
+  isPlaying?: boolean;
+  onSeek?: (frame: number) => void;
+  onTogglePlay?: () => void;
 }) {
   const durationInFrames = useMemo(() => docDuration(doc), [doc]);
   const inputProps = useMemo(() => ({ doc }), [doc]);
@@ -60,6 +67,7 @@ export default function EditorPreview({
   }, [width, height]);
 
   const canEdit = Boolean(onChange && onSelectionChange && selectedIds);
+  const [loop, setLoop] = useState(true);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", position: "relative" }}>
@@ -85,8 +93,7 @@ export default function EditorPreview({
           durationInFrames={durationInFrames}
           fps={fps}
           style={{ width: "100%", height: "100%" }}
-          controls
-          loop
+          loop={loop}
           errorFallback={({ error }) => (
             <AbsoluteFill style={{ backgroundColor: "#040D12", display: "flex", alignItems: "center", justifyContent: "center", padding: 40 }}>
               <div style={{ color: "#f87171", fontSize: 28, textAlign: "center", fontFamily: "sans-serif" }}>
@@ -109,6 +116,18 @@ export default function EditorPreview({
         )}
         </div>
       </div>
+
+      <EditorPlayerControls
+        playerRef={playerRef}
+        currentFrame={currentFrame}
+        durationInFrames={durationInFrames}
+        fps={fps}
+        isPlaying={isPlaying}
+        onSeek={onSeek}
+        onTogglePlay={onTogglePlay}
+        loop={loop}
+        onLoopChange={setLoop}
+      />
 
       {isEmpty && (
         <div

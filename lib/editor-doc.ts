@@ -747,3 +747,29 @@ export function duplicateItem(doc: EditorDoc, itemId: string): EditorDoc {
   const copy = cloneItem(found.item, found.item.from + found.item.durationInFrames);
   return addItem(doc, found.track.id, copy);
 }
+
+/** Is there room for an item of `duration` frames starting exactly at `from`? */
+export function hasRoomAt(track: Track, from: number, duration: number): boolean {
+  return track.items.every(
+    (i) => from + duration <= i.from || from >= i.from + i.durationInFrames,
+  );
+}
+
+/**
+ * A track with room at `from`, creating one if every existing track is busy
+ * there.
+ *
+ * Clicking "+ Text" should put the text under the playhead — that is where you
+ * are looking. Placing it on a busy track slid it to the first free slot
+ * instead, which is usually the end of the video, so it appeared to go nowhere.
+ */
+export function trackWithRoomAt(
+  doc: EditorDoc,
+  from: number,
+  duration: number,
+): { doc: EditorDoc; trackId: string } {
+  const existing = doc.tracks.find((t) => hasRoomAt(t, from, duration));
+  if (existing) return { doc, trackId: existing.id };
+  const grown = addTrack(doc);
+  return { doc: grown, trackId: grown.tracks[grown.tracks.length - 1].id };
+}
