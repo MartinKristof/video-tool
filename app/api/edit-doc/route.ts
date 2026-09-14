@@ -119,6 +119,26 @@ async function cachedTranscripts(doc: EditorDoc, projectId: string, mediaFolder:
   return out;
 }
 
+/**
+ * Cached transcripts for the project's FOOTAGE, keyed by filename.
+ *
+ * Separate from `cachedTranscripts`, which keys by asset id and therefore only
+ * covers footage already on the timeline. Compose starts from an EMPTY timeline
+ * and has to choose passages by what is said before placing anything — with only
+ * the asset-keyed map it could not hear the footage at all.
+ */
+async function mediaTranscripts(files: NonNullable<AgentContext["mediaFiles"]>, mediaFolder: string) {
+  const out: Record<string, TranscriptWord[]> = {};
+  for (const m of files) {
+    if (m.kind !== "video" && m.kind !== "audio") continue;
+    const onDisk = path.resolve(mediaFolder, m.file);
+    if (!onDisk.startsWith(path.resolve(mediaFolder)) || !fs.existsSync(onDisk)) continue;
+    const cached = await readCachedTranscript(onDisk);
+    if (cached?.words?.length) out[m.file] = cached.words;
+  }
+  return out;
+}
+
 const TRANSCRIBE_TOOL: Anthropic.Tool = {
   name: "transcribe_clip",
   description:
@@ -146,8 +166,14 @@ const RENDER_TOOL: Anthropic.Tool = {
   },
 };
 
-const MAX_TOOL_TURNS = 8;
-const MAX_OPS = 40;
+// Editing is a handful of steps; ASSEMBLING a cut from an empty timeline is not —
+// it reads every source's transcript, lays the footage out, looks up a card,
+// places two or three, and only then renders to check. At 8 turns that ran out
+// before the end card went on and before it had looked at anything (turns=8,
+// renders=0, capped). Ops stayed at 12 of 40, so turns were the binding limit.
+const MAX_TOOL_TURNS_EDIT = 8;
+const MAX_TOOL_TURNS_BUILD = 16;
+const MAX_OPS = 60;
 const MAX_RENDERS = 2;
 
 export async function POST(request: Request) {
@@ -185,6 +211,8 @@ export async function POST(request: Request) {
     // failure mode stays testable with no fs and no network.
     snippets: loadSnippetCatalog(),
   };
+  // Needs ctx.mediaFiles, so it runs after the object above is built.
+  if (mediaFolder) ctx.mediaTranscripts = await mediaTranscripts(ctx.mediaFiles ?? [], mediaFolder);
 
   // The bundle server runs on its own port, so a root-relative "/api/media/..."
   // src would 404 against it. Same rewrite /api/render does.
@@ -211,6 +239,10 @@ export async function POST(request: Request) {
     };
   });
 
+  // An empty timeline means this is an assembly, not an edit.
+  const isBuild = !incomingDoc.tracks.some((t) => t.items.length);
+  const maxToolTurns = isBuild ? MAX_TOOL_TURNS_BUILD : MAX_TOOL_TURNS_EDIT;
+
   const encoder = new TextEncoder();
   const readable = new ReadableStream({
     async start(controller) {
@@ -236,7 +268,7 @@ export async function POST(request: Request) {
         const usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
 
         for (;;) {
-          const forceFinal = toolTurns >= MAX_TOOL_TURNS || ops >= MAX_OPS;
+          const forceFinal = toolTurns >= maxToolTurns || ops >= MAX_OPS;
           const stream = anthropic.messages.stream({
             model: "claude-opus-5",
             max_tokens: 32000,

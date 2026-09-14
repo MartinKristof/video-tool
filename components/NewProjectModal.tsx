@@ -5,6 +5,8 @@ import { STYLE_MODES } from "@/lib/prompts/styles";
 import { TRANSITION_MODES } from "@/lib/prompts/transitions";
 import type { AnimationType, Engine, Resolution, Orientation, FPS, SvgFile, StyleMode, TopicCardStyle, TransitionStyle, Collection } from "@/lib/types";
 import { getAnimationTypeMeta, normalizeAnimationType } from "@/lib/animation-types";
+import { emptyDoc } from "@/lib/editor-doc";
+import { getProjectSize } from "@/lib/types";
 import Modal from "@/components/ui/Modal";
 import Button from "@/components/ui/Button";
 import Icon from "@/components/ui/Icon";
@@ -321,11 +323,24 @@ export default function NewProjectModal({ open, onClose, initialType, onCreated 
     // even before the project create POST resolves.
     setPhase({ kind: "creating-project" });
 
+    // Compose assembles onto a TIMELINE. Creating the document with the project
+    // (rather than after mount) is what makes the handoff work: useImperativeHandle
+    // re-binds during commit, before the effect that starts the first pass, so
+    // ChatPanel's runWithPrompt sees the document and routes to /api/edit-doc.
+    // Created client-side instead, it would still be closed over `undefined` and
+    // the first pass would quietly write a TSX file.
+    //
+    // Smart trim gets none: it builds its own document from the cut plan.
+    const composeSettings = { resolution, orientation, fps };
+    const startsAsTimeline = isVideo && videoMode === "compose";
     const projectBody = {
       name: name.trim(),
       animationType,
       engine,
-      settings: { resolution, orientation, fps },
+      settings: composeSettings,
+      ...(startsAsTimeline
+        ? { doc: emptyDoc({ ...getProjectSize(composeSettings), fps }) }
+        : {}),
       initialPrompt: isSmartTrim
         ? prompt.trim() || "Smart trim recording"
         : selectedSnippet

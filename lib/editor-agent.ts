@@ -92,8 +92,14 @@ export interface AgentContext {
     width?: number;
     height?: number;
   }[];
-  /** Word-level transcripts keyed by ASSET id. */
+  /** Word-level transcripts keyed by ASSET id — what is audible on the timeline. */
   transcripts?: Record<string, TranscriptWord[]>;
+  /**
+   * Word-level transcripts keyed by FILENAME — what is in the footage, whether or
+   * not it has been placed yet. Assembling a cut means choosing passages BEFORE
+   * anything is on the timeline, and the asset-keyed map above is empty then.
+   */
+  mediaTranscripts?: Record<string, TranscriptWord[]>;
   /**
    * The branded scene library. Assembled by the route, not read from disk here —
    * this module's contract is that it is pure, which is what lets every failure
@@ -575,6 +581,20 @@ export const DOC_TOOLS: Anthropic.Tool[] = [
         fromFrame: { type: "integer", description: "Optional window." },
         toFrame: { type: "integer" },
       },
+    },
+  },
+  {
+    name: "read_source_transcript",
+    description:
+      "Read what is said in one of the project's FOOTAGE FILES, whether or not it is on the timeline yet. Times come back in seconds into that file — exactly what sequence_media takes for sourceInSec/sourceOutSec, so a passage you pick here transfers with no arithmetic. This is how you choose what to use when assembling a cut from scratch.",
+    input_schema: {
+      type: "object",
+      properties: {
+        file: { type: "string", description: "Filename from the FOOTAGE AVAILABLE list." },
+        fromSec: { type: "number", description: "Optional window, seconds into the file." },
+        toSec: { type: "number" },
+      },
+      required: ["file"],
     },
   },
   {
@@ -1156,6 +1176,26 @@ export function applyDocTool(
         return {
           doc,
           result: `${words.length} words, each with the frames it lands on:\n${lines.join("\n")}`,
+        };
+      }
+
+      case "read_source_transcript": {
+        const file = str(input, "file");
+        const media = findMedia(file ?? "");
+        const words = ctx.mediaTranscripts?.[media.file];
+        if (!words?.length) {
+          throw new ToolError(
+            `No transcript for "${media.file}" yet. Only footage that has been analysed has one; call transcribe_clip on a clip of it, or pick a file that does.`,
+          );
+        }
+        const from = num(input, "fromSec") ?? 0;
+        const to = num(input, "toSec") ?? Number.POSITIVE_INFINITY;
+        const inWindow = words.filter((w) => w.end > from && w.start < to);
+        if (!inWindow.length) throw new ToolError(`Nothing is said between ${from}s and ${to}s of ${media.file}.`);
+        const lines = inWindow.map((w) => `${w.start.toFixed(2)}-${w.end.toFixed(2)}s ${w.text.trim()}`);
+        return {
+          doc,
+          result: `${inWindow.length} words in "${media.file}", timed in SECONDS INTO THE FILE — pass these straight to sequence_media as sourceInSec / sourceOutSec.\n${lines.join("\n")}`,
         };
       }
 

@@ -203,7 +203,9 @@ export default function ProjectEditor() {
     const action = searchParams.get("action");
     if (action !== "smarttrim" && action !== "compose") return;
     if (project.animationType !== "video") return;
-    if (project.code) return; // already built
+    // A timeline-native project has no code at all, so the old `project.code`
+    // test would have let the first pass re-run on every single load.
+    if (project.code || (project.doc?.tracks.some((t) => t.items.length) ?? false)) return; // already built
     consumedActionRef.current = true;
     router.replace(`/project/${projectId}`);
     void runFirstPass(action);
@@ -311,9 +313,18 @@ export default function ProjectEditor() {
         setFirstPass(null);
       } else {
         setFirstPass(null); // hand off to the AI chat's own generating UI
-        const prompt = hasNotes
-          ? "Build a first cut from my editorial notes: keep the highlighted passages, follow the inline comments, and structure it into topic segments. Ground every cut in the transcript timestamps and scene cuts. If an auto-reframed version of a clip is available, use it."
-          : "Build a strong first cut from the transcript and scene cuts: pick the most compelling, self-contained moments and assemble them cleanly. (No editorial notes were attached — use your judgment.) If an auto-reframed version of a clip is available, use it.";
+        // Two prompts, because the two paths ask for different things. With a
+        // timeline open the chat routes to /api/edit-doc and ASSEMBLES; without
+        // one it writes a scene file, as it always has.
+        const notesLine = hasNotes
+          ? "Follow my editorial notes: keep the highlighted passages and honour the inline comments."
+          : "No editorial notes were attached — use your judgment about what is worth keeping.";
+        const prompt = doc
+          ? `Assemble a first cut on the timeline. ${notesLine}\n\n` +
+            "Work in this order: read each source's transcript to find the passages worth using, lay them out in order with sequence_media, then put a branded card between the sections and an end card on the finish. Choose passages that are self-contained — start on a complete thought, end before the next one begins — and prefer an auto-reframed version of a clip where one exists. Render a few frames when you're done and fix anything that reads badly."
+          : hasNotes
+            ? "Build a first cut from my editorial notes: keep the highlighted passages, follow the inline comments, and structure it into topic segments. Ground every cut in the transcript timestamps and scene cuts. If an auto-reframed version of a clip is available, use it."
+            : "Build a strong first cut from the transcript and scene cuts: pick the most compelling, self-contained moments and assemble them cleanly. (No editorial notes were attached — use your judgment.) If an auto-reframed version of a clip is available, use it.";
         chatRef.current?.runWithPrompt(prompt);
       }
     } catch (err) {
@@ -1074,7 +1085,19 @@ export default function ProjectEditor() {
               style={{ height: "100%" }}
             >
               <Panel id="preview" defaultSize={hasTimeline ? "50%" : "65%"} minSize="15%">
-                <div style={{ background: "#000", height: "100%", minHeight: 0, minWidth: 0, overflow: "hidden" }}>
+                <div style={{ background: "#000", height: "100%", minHeight: 0, minWidth: 0, overflow: "hidden", position: "relative" }}>
+                  {/*
+                    The first-pass panel used to be one branch of this chain, so a
+                    project WITH a document could never show it — and compose now
+                    starts with an empty one, which would have left a two-minute
+                    analyze running behind a blank canvas with no sign of life.
+                    Over the top, not instead of.
+                  */}
+                  {docView && firstPass && (
+                    <div style={{ position: "absolute", inset: 0, zIndex: 10 }}>
+                      <FirstPassProgress state={firstPass} onDismiss={() => setFirstPass(null)} />
+                    </div>
+                  )}
                   {docView ? (
                     <EditorPreview
                       doc={docView}

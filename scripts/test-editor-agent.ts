@@ -651,6 +651,50 @@ head("the snippet ids are pinned into the tool schema, not the prompt");
   a(!none.some((t) => t.name === "add_snippet"), "with no library, the snippet tools are withdrawn entirely");
 }
 
+head("footage can be read BEFORE it is placed");
+{
+  // Assembling a cut means choosing passages from footage that is not on the
+  // timeline yet. docTranscript walks the DOCUMENT'S items, so on an empty
+  // timeline read_transcript and find_gaps both throw — which would have made
+  // compose-onto-a-timeline impossible. read_source_transcript reads the FILE.
+  const empty = base();
+  const withFootage = ctx({
+    mediaFiles: [{ file: "a.mp4", src: "/api/media/p/a.mp4", kind: "video" as const, durationSec: 10 }],
+    mediaTranscripts: { "a.mp4": WORDS },
+  });
+
+  refused(empty, "read_transcript", {}, "nothing is on the timeline yet", withFootage);
+
+  const read = applyDocTool(empty, "read_source_transcript", { file: "a.mp4" }, withFootage);
+  a(!read.isError, `but the file can be read (got: ${read.result.slice(0, 60)}…)`);
+  a(read.result.includes("website"), "the words come back");
+  a(read.result.includes("SECONDS INTO THE FILE"), "in the units sequence_media takes");
+  a(read.result.includes("0.60-1.10s"), "timed against the file, not the timeline");
+  a(read.doc === empty, "and reading changes nothing");
+
+  const windowed = applyDocTool(empty, "read_source_transcript", { file: "a.mp4", fromSec: 3 }, withFootage);
+  a(!windowed.isError && windowed.result.includes("into") && !windowed.result.includes("Turn"),
+    "a window narrows it to that stretch");
+
+  refused(empty, "read_source_transcript", { file: "nope.mp4" }, "a file the project doesn't have", withFootage);
+  refused(empty, "read_source_transcript", { file: "a.mp4", fromSec: 99 }, "a window with no speech in it", withFootage);
+  refused(
+    empty, "read_source_transcript", { file: "a.mp4" }, "footage that has not been analysed",
+    ctx({ mediaFiles: [{ file: "a.mp4", src: "/api/media/p/a.mp4", kind: "video" as const, durationSec: 10 }] }),
+  );
+
+  // The passage it picks must survive the round trip into a real cut.
+  const cut = applyDocTool(
+    empty, "sequence_media",
+    { clips: [{ file: "a.mp4", sourceInSec: 0.6, sourceOutSec: 1.1 }] },
+    withFootage,
+  );
+  a(!cut.isError, "a chosen passage lays down as a clip");
+  const clipItem = cut.doc.tracks.flatMap((t) => t.items)[0] as { sourceIn?: number; durationInFrames: number };
+  a(clipItem.sourceIn === 0.6, "starting exactly where the words did");
+  a(clipItem.durationInFrames === 15, "and lasting exactly as long as they do");
+}
+
 head("an unknown tool is an error, not a crash");
 {
   const doc = base();
