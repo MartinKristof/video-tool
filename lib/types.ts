@@ -22,6 +22,12 @@ export interface ProjectSettings {
   resolution: Resolution;
   orientation: Orientation;
   fps: FPS;
+  // Optional exact canvas size in px. When both are set they override the
+  // resolution/orientation presets — for bespoke deliverables (e.g. an
+  // 832x2496 event LED screen) that no preset can express. Read via
+  // getProjectSize(); API-only for now (the New Project modal has no field).
+  width?: number;
+  height?: number;
 }
 
 export interface ChatMessage {
@@ -149,5 +155,17 @@ const RESOLUTION_MAP: Record<`${Orientation}-${Resolution}`, { width: number; he
 };
 
 export function getResolution(orientation: Orientation, resolution: Resolution): { width: number; height: number } {
-  return RESOLUTION_MAP[`${orientation}-${resolution}`];
+  return RESOLUTION_MAP[`${orientation}-${resolution}`] ?? RESOLUTION_MAP["horizontal-4k"];
+}
+
+// Canvas size for a project: the explicit width/height when both are set,
+// otherwise the preset. Every consumer should go through this rather than
+// calling getResolution() directly, so bespoke sizes work everywhere.
+export function getProjectSize(settings: ProjectSettings): { width: number; height: number } {
+  const w = Number(settings.width);
+  const h = Number(settings.height);
+  if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+    return { width: Math.round(w), height: Math.round(h) };
+  }
+  return getResolution(settings.orientation, settings.resolution);
 }

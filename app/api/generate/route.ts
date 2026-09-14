@@ -9,7 +9,7 @@ import { listAssetPaths } from "@/lib/assets";
 import { getProject } from "@/lib/projects";
 import { buildEnrichedMediaFiles, type EnrichedMediaFile } from "@/lib/media-analysis";
 import { isReframedFilename } from "@/lib/reframe";
-import { getResolution } from "@/lib/types";
+import { getProjectSize } from "@/lib/types";
 import { analyzeSvgs, manifestForPrompt, diffForPrompt } from "@/lib/svg-analyzer";
 import { parseTape } from "@/lib/tape-parser";
 import type { AnimationType, Engine, ProjectSettings, ChatMessage, SvgFile, StyleMode, TopicCardStyle, TransitionStyle } from "@/lib/types";
@@ -207,7 +207,7 @@ export async function POST(request: Request) {
     }
     if (project?.mediaFolder && fs.existsSync(project.mediaFolder)) {
       const mediaFiles = listMediaFiles(project.mediaFolder, project.mediaFolder);
-      const target = getResolution(projectSettings.orientation, projectSettings.resolution);
+      const target = getProjectSize(projectSettings);
       const enriched = await buildEnrichedMediaFiles(project, mediaFiles, target);
       videoContext = {
         projectId,
@@ -302,10 +302,7 @@ export async function POST(request: Request) {
   // footage-overlay video projects (those can't be still-rendered from code
   // alone in this path). When enabled, the model drives its own vision loop.
   const toolsEnabled = !isTerminal && engine !== "hyperframes" && animationType !== "video";
-  const { width: renderWidth, height: renderHeight } = getResolution(
-    projectSettings.orientation,
-    projectSettings.resolution,
-  );
+  const { width: renderWidth, height: renderHeight } = getProjectSize(projectSettings);
 
   // Cache the big (~25K-token) system prompt so follow-up edits, error retries,
   // and every render→fix round re-pay ~0.1x on it instead of full price. The

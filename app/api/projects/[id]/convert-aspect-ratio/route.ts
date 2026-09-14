@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { getProject, createProject, updateProject } from "@/lib/projects";
 import type { Orientation, ProjectSettings } from "@/lib/types";
-import { getResolution } from "@/lib/types";
+import { getResolution, getProjectSize } from "@/lib/types";
 
 const anthropic = new Anthropic();
 
@@ -35,11 +35,12 @@ export async function POST(
     return Response.json({ error: "Project has no code to convert" }, { status: 400 });
   }
 
-  // Create the duplicate project with new orientation
-  const newSettings: ProjectSettings = {
-    ...source.settings,
-    orientation,
-  };
+  // Create the duplicate project with new orientation. A bespoke exact size
+  // (settings.width/height) must not carry over — the target is a preset.
+  const presetSettings: ProjectSettings = { ...source.settings, orientation };
+  delete presetSettings.width;
+  delete presetSettings.height;
+  const newSettings: ProjectSettings = presetSettings;
 
   const newProject = createProject({
     name: `${source.name} (${aspectRatio})`,
@@ -52,7 +53,7 @@ export async function POST(
   });
 
   // Build the conversion prompt
-  const { width: oldW, height: oldH } = getResolution(source.settings.orientation, source.settings.resolution);
+  const { width: oldW, height: oldH } = getProjectSize(source.settings);
   const { width: newW, height: newH } = getResolution(newSettings.orientation, newSettings.resolution);
 
   const scaleX = newW / oldW;

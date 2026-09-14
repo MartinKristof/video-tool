@@ -7,7 +7,7 @@ import { probeWithCache, readCachedProbe } from "@/lib/probe";
 import { detectScenesWithCache, readCachedScenes } from "@/lib/scene-detect";
 import { transcribeWithCache, readCachedTranscript } from "@/lib/transcribe";
 import { reframeWithCache, isReframeAvailable, readCachedReframe } from "@/lib/reframe";
-import { getResolution } from "@/lib/types";
+import { getProjectSize } from "@/lib/types";
 
 // Analysis includes transcription, which is slow for long media. This value is a
 // hint (self-hosted Next does not hard-enforce it). For very long interviews the
@@ -146,7 +146,7 @@ export async function POST(
         // the project's timeline aspect (e.g. 16:9 clip in a 9:16 project); can be
         // forced on/off via body.reframe. Best-effort — never fails the analysis.
         if (kind === "video") {
-          const target = getResolution(project.settings.orientation, project.settings.resolution);
+          const target = getProjectSize(project.settings);
           const srcAspect = probe.width && probe.height ? probe.width / probe.height : 0;
           const targetAspect = target.width / target.height;
           const mismatch = srcAspect > 0 && Math.abs(srcAspect - targetAspect) > 0.02;
@@ -210,7 +210,7 @@ export async function GET(
   if (!mediaPath) return NextResponse.json({ error: "Media file not found" }, { status: 404 });
 
   const kind = isVideoOrAudio(mediaPath);
-  const target = getResolution(project.settings.orientation, project.settings.resolution);
+  const target = getProjectSize(project.settings);
   const [probe, scenes, transcript, reframed] = await Promise.all([
     readCachedProbe(mediaPath),
     readCachedScenes(mediaPath),

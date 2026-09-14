@@ -12,7 +12,7 @@ import { buildHyperframesPrompt } from "./hyperframes-base";
 import type { SfxEntry } from "../sfx";
 import type { EnrichedMediaFile } from "../media-analysis";
 import type { AnimationType, Engine, ProjectSettings, StyleMode, TopicCardStyle, TransitionStyle } from "../types";
-import { getResolution } from "../types";
+import { getProjectSize } from "../types";
 
 export function buildSystemPrompt(
   animationType: AnimationType,
@@ -26,7 +26,7 @@ export function buildSystemPrompt(
   engine?: Engine,
   transitionStyle?: TransitionStyle,
 ): string {
-  const { width, height } = getResolution(settings.orientation, settings.resolution);
+  const { width, height } = getProjectSize(settings);
 
   if (animationType === "terminal") {
     return [buildTerminalBase(width, height, customTheme), TERMINAL_EDIT_EXAMPLES].join("\n\n");

@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { getProject } from "@/lib/projects";
 import { renderThumbnail } from "@/lib/render-queue";
-import { getResolution } from "@/lib/types";
+import { getProjectSize } from "@/lib/types";
 
 const PROJECTS_DIR = path.join(process.cwd(), "data", "projects");
 
@@ -36,7 +36,7 @@ export async function POST(
     return Response.json({ error: "Project not found or has no code" }, { status: 400 });
   }
 
-  const { width, height } = getResolution(project.settings.orientation, project.settings.resolution);
+  const { width, height } = getProjectSize(project.settings);
 
   try {
     await renderThumbnail(id, project.code, project.settings.fps, width, height, undefined, project.svgContents);

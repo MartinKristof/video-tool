@@ -17,7 +17,7 @@ import Timeline from "@/components/Timeline";
 import { evalSceneCode } from "@/remotion/DynamicScene";
 import { parseSceneMeta } from "@/lib/hyperframes/template";
 import type { Project, ChatMessage, TerminalAnnotations, StyleMode, TopicCardStyle, TransitionStyle } from "@/lib/types";
-import { getResolution } from "@/lib/types";
+import { getProjectSize } from "@/lib/types";
 import { buildTerminalExportPlan } from "@/lib/terminal-export";
 import { stripBackgroundsForTransparency } from "@/lib/transparent-bg";
 import Logo from "@/components/ui/Logo";
@@ -709,7 +709,7 @@ export default function ProjectEditor() {
 
   if (!project) return null;
 
-  const { width, height } = getResolution(project.settings.orientation, project.settings.resolution);
+  const { width, height } = getProjectSize(project.settings);
   const resLabel = `${width}\u00d7${height}`;
   const isVideoProject = project.animationType === "video";
   // The timeline panel mounts for every Remotion-scene project type too —
