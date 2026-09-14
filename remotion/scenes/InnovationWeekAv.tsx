@@ -25,7 +25,7 @@ export const durationInFrames = 450;
 
 // ---- Brand palette (canonical set only; orange is the single accent) -------
 const C = {
-  bg: "#161718",
+  bg: "#020202",
   text: "#f4f4f5",
   muted: "#bfc1c5",
   orange: "#F86606",
@@ -42,8 +42,8 @@ const FONT_CSS = `
 
 // ---- Beat timing (frames @ 30 fps) ------------------------------------------
 // Beat A    0–120  "Turn any website into data."
-// Beat B  120–240  the eight "Use Apify for" cases, two columns
-// Beat C  240–345  "68,000+ ready to run tools in Apify Store"
+// Beat B  120–240  the four "Use Apify for" cases, with icons
+// Beat C  240–345  "68,000+ ready-to-run tools in Apify Store"
 // Beat D  345–450  Apify wordmark lockup + apify.com
 const SCROLL_1 = 108;
 const SCROLL_2 = 228;
@@ -53,18 +53,48 @@ const SCROLL_DUR = 58;
 // leaves an empty frame between two beats.
 const STEP_RATIO = 0.82;
 
-// The eight use cases, in the two-column order they are presented in.
-const USE_CASES_LEFT = [
-  "Lead generation",
-  "Pricing intelligence",
-  "Product research",
-  "Social media monitoring",
-];
-const USE_CASES_RIGHT = [
-  "Competitive intelligence",
-  "Review sentiment",
-  "AI search monitoring",
-  "Influencer discovery",
+// The four use cases, each with its own line icon. Icons are drawn here as
+// plain stroked SVG on a 24x24 grid — no icon font, no external asset, so they
+// scale cleanly to any canvas and always match the accent colour.
+const USE_CASES: { label: string; icon: React.ReactNode }[] = [
+  {
+    label: "Lead generation",
+    // horseshoe magnet
+    icon: <path d="M4 3h5v9a3 3 0 0 0 6 0V3h5v9a8 8 0 0 1-16 0V3" />,
+  },
+  {
+    label: "Pricing intelligence",
+    // currency mark
+    icon: (
+      <g>
+        <path d="M12 1.5v21" />
+        <path d="M17 5.5H9.6a3.4 3.4 0 0 0 0 6.8h4.8a3.4 3.4 0 0 1 0 6.8H6.5" />
+      </g>
+    ),
+  },
+  {
+    label: "Product research",
+    // product tile under a magnifier
+    icon: (
+      <g>
+        <rect x="2" y="2" width="12" height="12" rx="2.5" />
+        <circle cx="15.5" cy="15.5" r="5" />
+        <path d="M19.2 19.2 22.4 22.4" />
+      </g>
+    ),
+  },
+  {
+    label: "Social media monitoring",
+    // two people
+    icon: (
+      <g>
+        <circle cx="9" cy="7.6" r="3.2" />
+        <path d="M2.8 19.6a6.2 6.2 0 0 1 12.4 0" />
+        <circle cx="17.6" cy="9" r="2.5" />
+        <path d="M16.6 13.9a5.2 5.2 0 0 1 4.6 4.6" />
+      </g>
+    ),
+  },
 ];
 
 // ---- Roll easing ------------------------------------------------------------
@@ -112,17 +142,8 @@ function easeRoll(t: number): number {
 
 type Preset = "SNAPPY" | "LIQUID" | "ELASTIC" | "GENTLE";
 
-// ---- Persistent background: flat brand ground, no glow, no watermark --------
-const Background: React.FC = () => (
-  <AbsoluteFill style={{ backgroundColor: C.bg }}>
-    <AbsoluteFill
-      style={{
-        background:
-          "linear-gradient(180deg, rgba(255,255,255,0.022) 0%, rgba(255,255,255,0) 42%, rgba(0,0,0,0) 66%, rgba(0,0,0,0.12) 100%)",
-      }}
-    />
-  </AbsoluteFill>
-);
+// ---- Persistent background: flat #020202, no glow, no watermark -------------
+const Background: React.FC = () => <AbsoluteFill style={{ backgroundColor: C.bg }} />;
 
 // ---- Type reveal ------------------------------------------------------------
 // Per character: pulled up into place on a spring while opacity lands in ~4
@@ -184,13 +205,14 @@ const Chars: React.FC<{
   );
 };
 
-// ---- Use-case row: orange dot pops first, then the line arrives ---------------
-const Bullet: React.FC<{ text: string; start: number; size: number; seed: string }> = ({
-  text,
-  start,
-  size,
-  seed,
-}) => {
+// ---- Use-case row: the icon pops first, then the line arrives -----------------
+const Bullet: React.FC<{
+  text: string;
+  start: number;
+  size: number;
+  icon: React.ReactNode;
+  seed: string;
+}> = ({ text, start, size, icon, seed }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const pd = springIn(frame, fps, start, "ELASTIC");
@@ -203,20 +225,27 @@ const Bullet: React.FC<{ text: string; start: number; size: number; seed: string
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  const dot = size * 0.24;
+  const box = size * 0.92;
   const drift = ambientDrift(frame, 1.5, 88, seed);
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: size * 0.34, transform: `translateY(${drift}px)` }}>
-      <div
+    <div style={{ display: "flex", alignItems: "center", gap: size * 0.42, transform: `translateY(${drift}px)` }}>
+      <svg
+        viewBox="0 0 24 24"
+        width={box}
+        height={box}
+        fill="none"
+        stroke={C.orange}
+        strokeWidth={1.7}
+        strokeLinecap="round"
+        strokeLinejoin="round"
         style={{
-          width: dot,
-          height: dot,
-          borderRadius: "50%",
-          background: C.orange,
+          flex: "0 0 auto",
           opacity: opd,
-          transform: `scale(${interpolate(pd, [0, 1], [0.2, 1])})`,
+          transform: `scale(${interpolate(pd, [0, 1], [0.55, 1])})`,
         }}
-      />
+      >
+        {icon}
+      </svg>
       <div
         style={{
           fontFamily: FONT,
@@ -393,11 +422,9 @@ export default function InnovationWeekAv() {
 
   const left = width * 0.08;
   const headline = Math.round(height * 0.15);
-  // Sized so the longest row ("Social media monitoring", 910px at this size)
-  // clears its column with room to spare — measured, not guessed.
-  const bullet = Math.round(height * 0.058);
-  const colGap = width * 0.05;
-  const colW = (width * 0.84 - colGap) / 2;
+  // One column now, so the rows can be big: the longest ("Social media
+  // monitoring") measures 1169px here and the row budget is 2150px.
+  const bullet = Math.round(height * 0.075);
   const stat = Math.round(height * 0.3);
   const sub = Math.round(height * 0.068);
 
@@ -432,28 +459,27 @@ export default function InnovationWeekAv() {
           </div>
         </div>
 
-        {/* Beat B — what people use Apify for. The two columns build together,
-            the left leading by 4 frames, so the block fills evenly. */}
-        <div style={slot(1, "flex-start", bullet * 0.9)}>
-          <Sub text="Use Apify for" start={B0} size={Math.round(bullet * 0.93)} seed="uch" />
-          <div style={{ display: "flex", gap: colGap }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: bullet * 0.62, width: colW }}>
-              {USE_CASES_LEFT.map((t, i) => (
-                <Bullet key={t} text={t} start={B0 + 6 + i * 8} size={bullet} seed={`ul${i}`} />
-              ))}
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: bullet * 0.62, width: colW }}>
-              {USE_CASES_RIGHT.map((t, i) => (
-                <Bullet key={t} text={t} start={B0 + 10 + i * 8} size={bullet} seed={`ur${i}`} />
-              ))}
-            </div>
+        {/* Beat B — what people use Apify for */}
+        <div style={slot(1, "flex-start", bullet * 0.8)}>
+          <Sub text="Use Apify for" start={B0} size={Math.round(bullet * 0.9)} seed="uch" />
+          <div style={{ display: "flex", flexDirection: "column", gap: bullet * 0.6 }}>
+            {USE_CASES.map((u, i) => (
+              <Bullet
+                key={u.label}
+                text={u.label}
+                icon={u.icon}
+                start={B0 + 6 + i * 10}
+                size={bullet}
+                seed={`u${i}`}
+              />
+            ))}
           </div>
         </div>
 
         {/* Beat C — the Store number */}
         <div style={slot(2, "flex-start", sub * 0.5)}>
           <CountUp to={68000} start={C0} dur={54} size={stat} seed="s0" />
-          <Sub text="ready to run tools in Apify Store" start={C0 + 10} size={sub} seed="s1" />
+          <Sub text="ready-to-run tools in Apify Store" start={C0 + 10} size={sub} seed="s1" />
         </div>
 
         {/* Beat D — wordmark lockup, holds fully present to the last frame */}

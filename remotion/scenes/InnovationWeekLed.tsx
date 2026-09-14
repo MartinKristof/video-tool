@@ -26,7 +26,7 @@ export const durationInFrames = 300;
 
 // ---- Brand palette (canonical set only; orange is the single accent) -------
 const C = {
-  bg: "#161718",
+  bg: "#020202",
   text: "#f4f4f5",
   muted: "#bfc1c5",
   orange: "#F86606",
@@ -43,7 +43,7 @@ const FONT_CSS = `
 
 // ---- Beat timing (frames @ 30 fps) ------------------------------------------
 // Beat A    0–96   "Turn any website into data."
-// Beat B   96–198  "68,000+ ready to run tools for AI."
+// Beat B   96–198  "68,000+ ready-to-run tools for AI."
 // Beat C  198–300  Apify wordmark lockup + apify.com
 const SCROLL_1 = 96;
 const SCROLL_2 = 198;
@@ -97,17 +97,8 @@ function easeRoll(t: number): number {
 
 type Preset = "SNAPPY" | "LIQUID" | "ELASTIC" | "GENTLE";
 
-// ---- Persistent background: flat brand ground, no glow ----------------------
-const Background: React.FC = () => (
-  <AbsoluteFill style={{ backgroundColor: C.bg }}>
-    <AbsoluteFill
-      style={{
-        background:
-          "linear-gradient(180deg, rgba(255,255,255,0.022) 0%, rgba(255,255,255,0) 38%, rgba(0,0,0,0) 62%, rgba(0,0,0,0.13) 100%)",
-      }}
-    />
-  </AbsoluteFill>
-);
+// ---- Persistent background: flat #020202, no glow, no gradient --------------
+const Background: React.FC = () => <AbsoluteFill style={{ backgroundColor: C.bg }} />;
 
 // ---- Type reveal ------------------------------------------------------------
 // Per character: the letter is pulled up into place on a spring while its
@@ -306,11 +297,11 @@ export default function InnovationWeekLed() {
           <Chars text="data." start={33} size={big} color={C.orange} preset="ELASTIC" stagger={1.1} seed="a4" />
         </div>
 
-        {/* Beat B — 68,000+ ready to run tools for AI. */}
+        {/* Beat B — 68,000+ ready-to-run tools for AI. */}
         <div style={slot(1, "flex-start")}>
           <CountUp to={68000} start={B0} dur={50} size={big} seed="b0" />
           <div style={{ height: mid * 0.34 }} />
-          <Chars text="ready to run" start={B0 + 8} size={mid} preset="SNAPPY" seed="b1" />
+          <Chars text="ready-to-run" start={B0 + 8} size={mid} preset="SNAPPY" seed="b1" />
           <Chars text="tools for AI." start={B0 + 18} size={mid} preset="LIQUID" stagger={1.5} seed="b2" />
         </div>
 
