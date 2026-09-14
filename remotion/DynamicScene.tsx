@@ -7,7 +7,48 @@ import type { MediaCapture } from "@/lib/timeline-extract";
 // The transform, the module shim and "what is a scene allowed to import" live
 // in a server-safe module so route handlers can read a scene's length without
 // importing this "use client" file. One list, not two.
-import { evalSceneModule, looksLikeCode, resolveModule } from "../lib/scene-eval";
+import * as RemotionTransitions from "@remotion/transitions";
+import * as RemotionFade from "@remotion/transitions/fade";
+import * as RemotionSlide from "@remotion/transitions/slide";
+import * as RemotionWipe from "@remotion/transitions/wipe";
+import * as RemotionFlip from "@remotion/transitions/flip";
+import * as RemotionClockWipe from "@remotion/transitions/clock-wipe";
+import * as RemotionIris from "@remotion/transitions/iris";
+import * as RemotionAnimationUtils from "@remotion/animation-utils";
+import * as RemotionPaths from "@remotion/paths";
+import * as RemotionShapes from "@remotion/shapes";
+import * as RemotionNoise from "@remotion/noise";
+import * as RemotionMotionBlur from "@remotion/motion-blur";
+import * as RemotionLayoutUtils from "@remotion/layout-utils";
+import * as Motion from "./motion";
+import * as Decor from "./decor";
+import * as Transitions from "./transitions";
+import { evalSceneModule, looksLikeCode, resolveModule, type SceneModules } from "../lib/scene-eval";
+
+// scene-eval deliberately resolves all of this to inert stubs: importing
+// `remotion` (or remotion/motion) needs React.createContext, which Next refuses
+// inside a server module — and reading a scene's declared LENGTH never touches
+// any of it. Here we actually render, so the real modules go in.
+const PACKAGES: Record<string, unknown> = {
+  remotion: RemotionLib,
+  "@remotion/transitions": RemotionTransitions,
+  "@remotion/transitions/fade": RemotionFade,
+  "@remotion/transitions/slide": RemotionSlide,
+  "@remotion/transitions/wipe": RemotionWipe,
+  "@remotion/transitions/flip": RemotionFlip,
+  "@remotion/transitions/clock-wipe": RemotionClockWipe,
+  "@remotion/transitions/iris": RemotionIris,
+  "@remotion/animation-utils": RemotionAnimationUtils,
+  "@remotion/paths": RemotionPaths,
+  "@remotion/shapes": RemotionShapes,
+  "@remotion/noise": RemotionNoise,
+  "@remotion/motion-blur": RemotionMotionBlur,
+  "@remotion/layout-utils": RemotionLayoutUtils,
+};
+const MODULES: SceneModules = {
+  motion: Motion, decor: Decor, transitions: Transitions, packages: PACKAGES,
+};
+const resolveWithLocals = (name: string) => resolveModule(name, MODULES);
 
 const { AbsoluteFill } = RemotionLib;
 
@@ -85,8 +126,8 @@ export function evalSceneCode(
     // does not, so it uses the real remotion module untouched.
     const instrumented = opts?.onMedia ? makeInstrumentedRemotion(opts.onMedia) : null;
     const req = instrumented
-      ? (name: string) => (name === "remotion" ? instrumented : resolveModule(name))
-      : resolveModule;
+      ? (name: string) => (name === "remotion" ? instrumented : resolveWithLocals(name))
+      : resolveWithLocals;
 
     const result = evalSceneModule(code, req);
     if (!result) return null;

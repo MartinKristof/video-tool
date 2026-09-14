@@ -14,48 +14,72 @@
  * Nothing here RENDERS anything. `durationInFrames` and `fps` are module-scope
  * exports, evaluated when the module body runs, so they can be read without ever
  * mounting the component — which is what makes this safe on the server.
+ *
+ * ── Why motion/decor/transitions are NOT imported here ──────────────────────
+ * `remotion/motion.ts` calls `createContext`, which Next refuses inside a server
+ * module — importing it turned every route that touched this file into a 500.
+ * They are not needed either: a scene's module scope only ever computes from its
+ * own local consts (PromptBox from TYPING_SECONDS + HOLD_SECONDS, Years from two
+ * frame counts, AiChat from a flag); the imported helpers are called inside the
+ * component, which never runs here. So the server resolves them to inert stubs,
+ * and DynamicScene — which is a client component and does render — passes the
+ * real modules in.
  */
 
 import * as React from "react";
-import * as RemotionLib from "remotion";
-import * as RemotionTransitions from "@remotion/transitions";
-import * as RemotionFade from "@remotion/transitions/fade";
-import * as RemotionSlide from "@remotion/transitions/slide";
-import * as RemotionWipe from "@remotion/transitions/wipe";
-import * as RemotionFlip from "@remotion/transitions/flip";
-import * as RemotionClockWipe from "@remotion/transitions/clock-wipe";
-import * as RemotionIris from "@remotion/transitions/iris";
-import * as RemotionAnimationUtils from "@remotion/animation-utils";
-import * as RemotionPaths from "@remotion/paths";
-import * as RemotionShapes from "@remotion/shapes";
-import * as RemotionNoise from "@remotion/noise";
-import * as RemotionMotionBlur from "@remotion/motion-blur";
-import * as RemotionLayoutUtils from "@remotion/layout-utils";
 import { transform } from "sucrase";
 import { BRAND, BRAND_FONT_FACE_CSS } from "../remotion/theme";
-import * as Motion from "../remotion/motion";
-import * as Decor from "../remotion/decor";
-import * as Transitions from "../remotion/transitions";
 
 const THEME_MODULE = { BRAND, BRAND_FONT_FACE_CSS };
 
-export const MODULE_MAP: Record<string, unknown> = {
-  remotion: RemotionLib,
-  react: React,
-  "@remotion/transitions": RemotionTransitions,
-  "@remotion/transitions/fade": RemotionFade,
-  "@remotion/transitions/slide": RemotionSlide,
-  "@remotion/transitions/wipe": RemotionWipe,
-  "@remotion/transitions/flip": RemotionFlip,
-  "@remotion/transitions/clock-wipe": RemotionClockWipe,
-  "@remotion/transitions/iris": RemotionIris,
-  "@remotion/animation-utils": RemotionAnimationUtils,
-  "@remotion/paths": RemotionPaths,
-  "@remotion/shapes": RemotionShapes,
-  "@remotion/noise": RemotionNoise,
-  "@remotion/motion-blur": RemotionMotionBlur,
-  "@remotion/layout-utils": RemotionLayoutUtils,
-};
+/**
+ * Stands in for a module a scene imports but never touches at module scope.
+ * Any property, and any call, yields another stub rather than throwing — so a
+ * stray `SPRINGS.SNAPPY` at the top of a file can't stop a length being read.
+ */
+function inertModule(): unknown {
+  const stub: unknown = new Proxy(function () {} as unknown as object, {
+    get: (_t, key) => (key === "__esModule" ? true : stub),
+    apply: () => stub,
+    construct: () => stub as object,
+  });
+  return stub;
+}
+
+/**
+ * The modules a scene is resolved against. Anything omitted becomes an inert
+ * stub, which is all that reading a declared length needs — a scene's module
+ * scope computes from its own local consts and never touches these.
+ */
+export interface SceneModules {
+  motion?: unknown;
+  decor?: unknown;
+  transitions?: unknown;
+  /** Keyed by package name, e.g. "remotion", "@remotion/paths". */
+  packages?: Record<string, unknown>;
+}
+
+/**
+ * Package names a scene may import. The MODULES themselves are supplied by the
+ * caller — importing `remotion` here would break every server route that touches
+ * this file, because Remotion needs React.createContext at module load.
+ */
+export const KNOWN_PACKAGES = [
+  "remotion",
+  "@remotion/transitions",
+  "@remotion/transitions/fade",
+  "@remotion/transitions/slide",
+  "@remotion/transitions/wipe",
+  "@remotion/transitions/flip",
+  "@remotion/transitions/clock-wipe",
+  "@remotion/transitions/iris",
+  "@remotion/animation-utils",
+  "@remotion/paths",
+  "@remotion/shapes",
+  "@remotion/noise",
+  "@remotion/motion-blur",
+  "@remotion/layout-utils",
+] as const;
 
 // The same module reached by many spellings: a branded scene says "../../theme",
 // a generated one says "@/lib/brand", the snippet library says "./theme".
@@ -76,21 +100,29 @@ const TRANSITIONS_PATTERNS = [
   "../transitions", "../../transitions",
 ];
 
-/** The `require` a scene module is evaluated against. */
-export function resolveModule(moduleName: string): unknown {
-  const mod = MODULE_MAP[moduleName];
-  if (mod) return mod;
+/**
+ * The `require` a scene module is evaluated against.
+ *
+ * `locals` lets a caller that CAN render — the client preview — supply the real
+ * motion/decor/transitions modules. Omitted, they resolve to inert stubs, which
+ * is all that reading a declared length requires.
+ */
+export function resolveModule(moduleName: string, locals: SceneModules = {}): unknown {
+  if (moduleName === "react") return React;
+  const pkg = locals.packages?.[moduleName];
+  if (pkg) return pkg;
+  if ((KNOWN_PACKAGES as readonly string[]).includes(moduleName)) return inertModule();
 
   const matches = (patterns: string[]) =>
     patterns.some((p) => moduleName.endsWith(p) || moduleName === p);
 
   if (matches(THEME_PATTERNS)) return THEME_MODULE;
-  if (matches(MOTION_PATTERNS)) return Motion;
-  if (matches(DECOR_PATTERNS)) return Decor;
-  if (matches(TRANSITIONS_PATTERNS)) return Transitions;
+  if (matches(MOTION_PATTERNS)) return locals.motion ?? inertModule();
+  if (matches(DECOR_PATTERNS)) return locals.decor ?? inertModule();
+  if (matches(TRANSITIONS_PATTERNS)) return locals.transitions ?? inertModule();
 
-  for (const key of Object.keys(MODULE_MAP)) {
-    if (moduleName.startsWith(key + "/")) return MODULE_MAP[key];
+  for (const key of KNOWN_PACKAGES) {
+    if (moduleName.startsWith(key + "/")) return locals.packages?.[key] ?? inertModule();
   }
 
   // Unknown module — return empty silently, as the preview always has.

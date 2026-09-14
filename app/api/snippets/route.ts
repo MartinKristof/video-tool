@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
+import { SNIPPET_META as META } from "@/lib/snippet-catalog";
 
 interface Snippet {
   id: string;
@@ -9,29 +10,6 @@ interface Snippet {
   code: string;
 }
 
-const META: Record<string, { name: string; subtitle: string }> = {
-  IntroCard: { name: "Intro card", subtitle: "Wordmark + headline with highlighted phrase" },
-  LowerThird: { name: "Lower third", subtitle: "Name tag with orange accent rule (single or dual)" },
-  EndCard: { name: "End card", subtitle: "Outlined CTA pill + QR + promo code" },
-  StatCallout: { name: "Stat callout", subtitle: "Big animated number with orange highlight" },
-  QuoteCard: { name: "Quote card", subtitle: "Testimonial card with orange quotemark" },
-  LogoBumper: { name: "Logo bumper", subtitle: "Apify symbol reveal — opener/closer" },
-  CalloutBanner: { name: "Callout banner", subtitle: "Headline strip overlay with highlighted phrase" },
-  ListReveal: { name: "List reveal", subtitle: "Checkmark feature list inside a card" },
-  CodeSnippet: { name: "Code snippet", subtitle: "Editor card — monochrome orange syntax" },
-  SymbolBug: { name: "Symbol bug", subtitle: "Corner watermark — overlay this on footage" },
-  PathReveal: { name: "Path reveal", subtitle: "Headline with hand-drawn orange underline" },
-  RisingStarsList: { name: "Rising Stars list", subtitle: "Numbered Actor cards + corner wedge" },
-  LogoGridStrip: { name: "Logo grid", subtitle: '"Works with" partner-logo strip' },
-  FourQuadrant: { name: "Four quadrants", subtitle: "2×2 feature-card grid with partner row" },
-  BeforeAfter: { name: "Before / after", subtitle: "Stacked comparison cards" },
-  EventCard: { name: "Event card", subtitle: "Event title + date + sponsor logo" },
-  MCPLaunchFrame: { name: "MCP launch frame", subtitle: "Schematic-style line-draw frame" },
-  PromptBox: { name: "Prompt box", subtitle: "Claude composer — typewriter prompt reveal (transparent)" },
-  AiChat: { name: "AI chat", subtitle: "Prompt bubble + typed answer or screenshots → Apify wordmark" },
-  Years: { name: "Years", subtitle: "White year counter slides 2004 → 2014, then holds (transparent)" },
-  ActorCard: { name: "Actor card", subtitle: "Apify Store Actor card — search the Store, auto-fills icon + details" },
-};
 
 export async function GET() {
   const dir = path.join(process.cwd(), "remotion", "scenes", "branded");

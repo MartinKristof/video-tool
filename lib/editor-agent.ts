@@ -62,6 +62,7 @@ import {
   type SolidItem,
   type TextItem,
   type TextStyle,
+  type VideoItem,
 } from "./editor-doc";
 import { ANIMATION_PRESETS, presetsFor, type AnimationPreset } from "./editor-effects";
 import {
@@ -215,8 +216,12 @@ export function describeDoc(doc: EditorDoc, ctx: AgentContext): string {
             ? " (frontmost)"
             : "";
     const flags = [track.hidden ? "HIDDEN" : "", track.muted ? "MUTED" : ""].filter(Boolean);
+    // The end frame matters: without it the model has no way to express "after
+    // what's already there", and every clip it adds lands on the playhead.
+    const end = track.items.reduce((m, i) => Math.max(m, i.from + i.durationInFrames), 0);
+    const endsAt = track.items.length ? ` — ends at frame ${end} (${secs(end, fps)}s)` : "";
     lines.push(
-      `Track [${track.id}] "${track.name}"${where}${flags.length ? ` [${flags.join(" ")}]` : ""}`,
+      `Track [${track.id}] "${track.name}"${where}${flags.length ? ` [${flags.join(" ")}]` : ""}${endsAt}`,
     );
     if (!track.items.length) lines.push("  (empty)");
     for (const item of [...track.items].sort((a, b) => a.from - b.from)) {
@@ -435,17 +440,48 @@ export const DOC_TOOLS: Anthropic.Tool[] = [
   {
     name: "add_media",
     description:
-      "Place one of the project's own footage or audio files on a track. Name it by filename exactly as listed in the outline.",
+      "Place ONE of the project's own footage or audio files on a track. Name it by filename exactly as listed in the outline. To lay several clips out one after another, use sequence_media instead — calling this repeatedly stacks them.",
     input_schema: {
       type: "object",
       properties: {
         file: { type: "string", description: "Filename from the FOOTAGE AVAILABLE list." },
         fromFrame: { type: "integer", description: "Omit to place at the playhead." },
+        atEnd: {
+          type: "boolean",
+          description:
+            "Place it AFTER everything already on the track instead of at a frame. This is what you want when adding a clip to the end of a cut.",
+        },
         durationInFrames: { type: "integer", description: "Omit to use the whole file." },
         sourceInSec: { type: "number", description: "Seconds into the file to start from." },
         trackId: { type: "string" },
       },
       required: ["file"],
+    },
+  },
+  {
+    name: "sequence_media",
+    description:
+      "Lay several footage or audio files out one after another on a SINGLE track, gapless, in the order given. This is how you assemble a cut from a pile of clips. Use it instead of calling add_media once per file — add_media places each clip at the playhead, so repeated calls stack them all on top of each other on separate tracks.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clips: {
+          type: "array",
+          description: "The clips to lay down, in the order they should play.",
+          items: {
+            type: "object",
+            properties: {
+              file: { type: "string", description: "Filename from the FOOTAGE AVAILABLE list." },
+              sourceInSec: { type: "number", description: "Seconds into the file to start from." },
+              sourceOutSec: { type: "number", description: "Seconds into the file to stop at." },
+            },
+            required: ["file"],
+          },
+        },
+        trackId: { type: "string", description: "Omit to use the first track with room." },
+        fromFrame: { type: "integer", description: "Where the run starts. Omit to append after what's already there." },
+      },
+      required: ["clips"],
     },
   },
   {
@@ -865,44 +901,66 @@ export function applyDocTool(
       case "add_media": {
         const file = str(input, "file");
         if (!file) throw new ToolError("file is required.");
-        const media = ctx.mediaFiles?.find((m) => m.file === file || m.file.endsWith(`/${file}`));
-        if (!media) {
-          throw new ToolError(
-            `No footage called "${file}". Available: ${(ctx.mediaFiles ?? []).map((m) => m.file).join(", ") || "(none — this project has no media)"}.`,
-          );
-        }
-        const from = Math.max(0, Math.round(num(input, "fromFrame") ?? playhead));
+        const media = findMedia(file);
+        const trackId = input.trackId != null ? requireTrack(doc, input.trackId) : undefined;
+        const from =
+          input.atEnd === true
+            ? trackEnd(doc, trackId)
+            : Math.max(0, Math.round(num(input, "fromFrame") ?? playhead));
         const sourceIn = Math.max(0, num(input, "sourceInSec") ?? 0);
         const fallback = media.durationSec ? (media.durationSec - sourceIn) * fps : fps * 3;
         const duration = Math.max(1, Math.round(num(input, "durationInFrames") ?? fallback));
 
-        const existing = doc.assets.find((a) => a.src === media.src);
-        const asset: Asset = existing ?? {
-          id: makeId("asset"),
-          kind: media.kind,
-          src: media.src,
-          name: file,
-          durationSec: media.durationSec,
-          width: media.width,
-          height: media.height,
-        };
-        const host = existing ? doc : addAsset(doc, asset);
-
-        const isAudio = media.kind === "audio";
-        const base = {
-          id: makeId(media.kind),
-          from,
-          durationInFrames: duration,
-          layout: { x: 0, y: 0, width: doc.size.width, height: doc.size.height },
-          assetId: asset.id,
-          sourceIn,
-        };
-        const item = (isAudio
-          ? { ...base, type: "audio" as const }
-          : media.kind === "image"
-            ? { ...base, type: "image" as const, fit: "cover" as const }
-            : { ...base, type: "video" as const }) as EditorItem;
+        const { doc: host, asset } = ensureAsset(doc, media, file);
+        const item = mediaItem(asset, media.kind, from, duration, sourceIn);
         return place(item, input.trackId, from, duration, `Placed "${file}"`, host);
+      }
+
+      case "sequence_media": {
+        const raw = input.clips;
+        if (!Array.isArray(raw) || !raw.length) throw new ToolError("clips is required — give at least one.");
+        const wanted = (raw as Record<string, unknown>[]).map((c, i) => {
+          const file = str(c, "file");
+          if (!file) throw new ToolError(`Clip ${i + 1} has no file.`);
+          return { file, media: findMedia(file), inSec: num(c, "sourceInSec"), outSec: num(c, "sourceOutSec") };
+        });
+
+        // ONE track for the whole run. Laying a cut out means the clips follow
+        // each other; picking a track per clip is what stacked them all at frame
+        // zero on separate tracks.
+        let host = doc;
+        let trackId = input.trackId != null ? requireTrack(doc, input.trackId) : undefined;
+        if (!trackId) {
+          const empty = doc.tracks.find((t) => !t.items.length);
+          trackId = empty?.id ?? doc.tracks[0]?.id;
+          if (!trackId) {
+            host = addTrack(doc);
+            trackId = host.tracks[host.tracks.length - 1].id;
+          }
+        }
+
+        let cursor = Math.max(
+          0,
+          Math.round(num(input, "fromFrame") ?? trackEnd(host, trackId)),
+        );
+        const placed: string[] = [];
+        for (const w of wanted) {
+          const sourceIn = Math.max(0, w.inSec ?? 0);
+          const outSec = w.outSec ?? w.media.durationSec;
+          const seconds = outSec != null ? outSec - sourceIn : undefined;
+          const duration = Math.max(1, Math.round((seconds ?? 3) * fps));
+          const withAsset = ensureAsset(host, w.media, w.file);
+          host = withAsset.doc;
+          const item = mediaItem(withAsset.asset, w.media.kind, cursor, duration, sourceIn);
+          if (outSec != null) (item as VideoItem).sourceOut = outSec;
+          host = addItem(host, trackId, item);
+          placed.push(item.id);
+          cursor += duration;
+        }
+        return {
+          doc: host,
+          result: `Laid ${placed.length} clip(s) end to end on track ${trackId}, finishing at frame ${cursor} (${secs(cursor, fps)}s). Ids: ${placed.join(", ")}.`,
+        };
       }
 
       case "add_captions": {
@@ -1043,6 +1101,68 @@ export function applyDocTool(
       default:
         throw new ToolError(`Unknown tool "${name}".`);
     }
+  }
+
+  /** The frame after everything on a track — or on the whole document. */
+  function trackEnd(d: EditorDoc, trackId?: string): number {
+    const tracks = trackId ? d.tracks.filter((t) => t.id === trackId) : d.tracks;
+    let end = 0;
+    for (const t of tracks) {
+      for (const i of t.items) end = Math.max(end, i.from + i.durationInFrames);
+    }
+    return end;
+  }
+
+  function findMedia(file: string) {
+    const media = ctx.mediaFiles?.find((m) => m.file === file || m.file.endsWith(`/${file}`));
+    if (!media) {
+      throw new ToolError(
+        `No footage called "${file}". Available: ${(ctx.mediaFiles ?? []).map((m) => m.file).join(", ") || "(none — this project has no media)"}.`,
+      );
+    }
+    return media;
+  }
+
+  /** Register a source file once, however many clips play from it. */
+  function ensureAsset(
+    d: EditorDoc,
+    media: NonNullable<AgentContext["mediaFiles"]>[number],
+    file: string,
+  ): { doc: EditorDoc; asset: Asset } {
+    const existing = d.assets.find((a) => a.src === media.src);
+    if (existing) return { doc: d, asset: existing };
+    const asset: Asset = {
+      id: makeId("asset"),
+      kind: media.kind,
+      src: media.src,
+      name: file,
+      durationSec: media.durationSec,
+      width: media.width,
+      height: media.height,
+    };
+    return { doc: addAsset(d, asset), asset };
+  }
+
+  function mediaItem(
+    asset: Asset,
+    kind: AssetKind,
+    from: number,
+    durationInFrames: number,
+    sourceIn: number,
+  ): EditorItem {
+    const base = {
+      id: makeId(kind),
+      from,
+      durationInFrames,
+      layout: { x: 0, y: 0, width: doc.size.width, height: doc.size.height },
+      assetId: asset.id,
+      sourceIn,
+    };
+    return (kind === "audio"
+      ? { ...base, type: "audio" as const }
+      : kind === "image"
+        ? { ...base, type: "image" as const, fit: "cover" as const }
+        : { ...base, type: "video" as const }) as EditorItem;
   }
 
   /** Put a freshly-made item on a named track, or on one with room there. */

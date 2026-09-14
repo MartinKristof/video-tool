@@ -211,6 +211,76 @@ head("placing footage by filename");
   a(twice.assets.filter((x) => x.src === "/api/media/p/b-roll.mp4").length === 1, "the asset is reused, not duplicated");
 }
 
+head("laying footage out does not stack it at frame zero");
+{
+  // The failure this exists to prevent: add_media defaults to the playhead (0 on
+  // a fresh document) and place() adds a NEW TRACK when frame 0 is taken — so
+  // "lay out my footage" gave N tracks all starting at 0, only the top one
+  // visible. That is the default behaviour of the headline feature.
+  const media = ctx({
+    playheadFrame: 0,
+    mediaFiles: [
+      { file: "a.mp4", src: "/api/media/p/a.mp4", kind: "video" as const, durationSec: 4 },
+      { file: "b.mp4", src: "/api/media/p/b.mp4", kind: "video" as const, durationSec: 2 },
+      { file: "c.mp4", src: "/api/media/p/c.mp4", kind: "video" as const, durationSec: 3 },
+    ],
+  });
+
+  // The old way, one call per file — still stacks, which is why the tool
+  // description now sends the model to sequence_media instead.
+  let stacked = base();
+  for (const f of ["a.mp4", "b.mp4", "c.mp4"]) {
+    stacked = applyDocTool(stacked, "add_media", { file: f, fromFrame: 0 }, media).doc;
+  }
+  a(stacked.tracks.length > 1, "one-call-per-file really does spread across tracks (the bug)");
+
+  // sequence_media: one track, in order, gapless.
+  const seq = applyDocTool(
+    base(), "sequence_media",
+    { clips: [{ file: "a.mp4" }, { file: "b.mp4" }, { file: "c.mp4" }] },
+    media,
+  );
+  a(!seq.isError, `sequence_media applied (got: ${seq.result})`);
+  a(isValidDoc(seq.doc), "valid");
+  const laid = seq.doc.tracks.filter((t) => t.items.length);
+  a(laid.length === 1, `all on ONE track (got ${laid.length})`);
+  const items = laid[0].items;
+  a(items.length === 3, "all three clips are there");
+  a(items[0].from === 0 && items[0].durationInFrames === 120, "clip 1 is 4s at the start");
+  a(items[1].from === 120 && items[1].durationInFrames === 60, "clip 2 follows immediately, 2s");
+  a(items[2].from === 180 && items[2].durationInFrames === 90, "clip 3 follows that, 3s");
+  a(docDuration(seq.doc) === 270, "total is the sum, not the longest");
+
+  // Sub-ranges of the same file, and the asset registered once.
+  const ranges = applyDocTool(
+    base(), "sequence_media",
+    { clips: [
+      { file: "a.mp4", sourceInSec: 0, sourceOutSec: 1 },
+      { file: "a.mp4", sourceInSec: 3, sourceOutSec: 4 },
+    ] },
+    media,
+  );
+  a(!ranges.isError, "two ranges of one file");
+  a(ranges.doc.assets.length === 1, "the source is registered once, not twice");
+  const rItems = ranges.doc.tracks.find((t) => t.items.length)!.items as { from: number; sourceIn?: number }[];
+  a(rItems[0].sourceIn === 0 && rItems[1].sourceIn === 3, "each clip plays its own stretch");
+  a(rItems[1].from === 30, "and they are laid end to end regardless of source position");
+
+  // Appending: a second run continues after the first.
+  const more = applyDocTool(seq.doc, "sequence_media", { clips: [{ file: "b.mp4" }] }, media);
+  const after = more.doc.tracks.find((t) => t.items.length)!.items;
+  a(after.length === 4 && after[3].from === 270, "a later run appends rather than overwriting");
+
+  // add_media's explicit append does the same for a single clip.
+  const appended = applyDocTool(seq.doc, "add_media", { file: "b.mp4", atEnd: true }, media);
+  a(!appended.isError, "add_media atEnd applied");
+  const appendedItems = appended.doc.tracks.find((t) => t.items.some((i) => i.from === 270));
+  a(!!appendedItems, "atEnd lands after everything already there, not on the playhead");
+
+  refused(base(), "sequence_media", { clips: [] }, "no clips", media);
+  refused(base(), "sequence_media", { clips: [{ file: "nope.mp4" }] }, "a file the project doesn't have", media);
+}
+
 head("overlap can never be committed");
 {
   let doc = base();
