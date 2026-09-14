@@ -20,7 +20,7 @@ import {
   makeId, moveItem, removeItem, reorderTrack, rippleRemoveItem, setLayout,
   captionPageAt, cloneItem, duplicateItem, moveItemToTrack, paginateCaptions,
   hasRoomAt, resizeLayout, snapBox, splitItem, trackWithRoomAt, trimItem, updateItem,
-  type Asset, type CaptionToken, type EditorDoc, type SolidItem, type TextItem, type VideoItem,
+  type Asset, type CaptionToken, type EditorDoc, type SceneItem, type SolidItem, type TextItem, type VideoItem,
 } from "../lib/editor-doc";
 
 let pass = 0, fail = 0;
@@ -514,6 +514,42 @@ head("a new layer lands under the playhead");
   a(hasRoomAt(gap.tracks[0], 50, 60), "a gap that fits exactly is room");
   a(!hasRoomAt(gap.tracks[0], 50, 61), "one frame too long is not");
   a(hasRoomAt(gap.tracks[0], 160, 10), "after the last clip is room");
+}
+
+head("splitting and trimming a SCENE moves its window, like a media trim");
+{
+  // A scene is windowed onto an embedded composition by `sourceOffsetFrames` —
+  // the same idea as sourceIn on a clip, and it needs the same handling. Copy it
+  // to the tail unchanged and the second half REPLAYS the first, which is what a
+  // cut through a branded card used to do.
+  const scene = (id: string, from: number, dur: number, offset = 0): SceneItem => ({
+    type: "scene", id, from, durationInFrames: dur, layout: { ...box },
+    code: "// scene", sourceOffsetFrames: offset,
+  });
+
+  let doc = base();
+  doc = addItem(doc, t0(doc), scene("sc", 0, 60));
+  const split = splitItem(doc, "sc", 30, FPS);
+  const [head0, tail0] = split.tracks[0].items as SceneItem[];
+  a(head0.sourceOffsetFrames === 0, "the head keeps the original offset");
+  a(tail0.sourceOffsetFrames === 30, `the tail CONTINUES the scene (got ${tail0.sourceOffsetFrames})`);
+  a(tail0.id !== head0.id, "and is a new item");
+
+  // An already-windowed scene accumulates rather than resetting.
+  let win = base();
+  win = addItem(win, t0(win), scene("w", 0, 60, 100));
+  const splitWin = splitItem(win, "w", 20, FPS);
+  a((splitWin.tracks[0].items[1] as SceneItem).sourceOffsetFrames === 120, "an already-windowed scene accumulates");
+
+  // Dragging the left edge moves the window too.
+  const trimmed = trimItem(doc, "sc", "left", 15, FPS);
+  a((trimmed.tracks[0].items[0] as SceneItem).sourceOffsetFrames === 15, "a left-trim advances the window");
+  // The right edge only shortens it — nothing to move.
+  const right = trimItem(doc, "sc", "right", -15, FPS);
+  a((right.tracks[0].items[0] as SceneItem).sourceOffsetFrames === 0, "a right-trim leaves the window alone");
+  // And it can never go negative.
+  const past = trimItem(doc, "sc", "left", -100, FPS);
+  a(((past.tracks[0].items[0] as SceneItem).sourceOffsetFrames ?? 0) >= 0, "the window never goes negative");
 }
 
 head("viewer timecode");

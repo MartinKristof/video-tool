@@ -428,6 +428,29 @@ head("read-only tools never touch the document");
   }
 }
 
+head("cutting through a branded scene block does not restart it");
+{
+  // This is why the scene window had to follow a split: cutRange splits at BOTH
+  // edges of the cut, so a cut landing inside a branded card used to leave the
+  // remainder replaying the card from its beginning.
+  let doc = base();
+  doc = addItem(doc, t0(doc), {
+    type: "scene", id: "card", from: 0, durationInFrames: 120, layout: { ...box },
+    code: "// branded card", sourceOffsetFrames: 0,
+  } as never);
+
+  const out = applyDocTool(doc, "cut_range", { fromFrame: 40, toFrame: 70 }, ctx());
+  a(!out.isError, "the cut applied");
+  const pieces = out.doc.tracks[0].items as { id: string; from: number; durationInFrames: number; sourceOffsetFrames?: number }[];
+  a(pieces.length === 2, `the card became two blocks (got ${pieces.length})`);
+  a(pieces[0].sourceOffsetFrames === 0, "the first still starts at the beginning of the card");
+  a(
+    pieces[1].sourceOffsetFrames === 70,
+    `the second resumes PAST the cut at frame 70, not from 0 (got ${pieces[1].sourceOffsetFrames})`,
+  );
+  a(pieces[1].from === 40, "and sits flush against the first once the hole closes");
+}
+
 head("an unknown tool is an error, not a crash");
 {
   const doc = base();

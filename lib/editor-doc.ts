@@ -492,6 +492,12 @@ export function trimItem(
       from: i.from + applied,
       durationInFrames: i.durationInFrames - applied,
     };
+    // Dragging the left edge moves the window, so whatever the item plays from
+    // has to move with it — seconds into a file, or frames into an embedded
+    // composition. Without this a trimmed scene restarts from its old frame.
+    if (i.type === "scene") {
+      return { ...next, sourceOffsetFrames: Math.max(0, (i.sourceOffsetFrames ?? 0) + applied) };
+    }
     if (!hasSource(i)) return next;
     return { ...next, sourceIn: (i.sourceIn ?? 0) + applied / fps };
   });
@@ -516,6 +522,12 @@ export function splitItem(doc: EditorDoc, itemId: string, atFrame: number, fps: 
     const cutSec = (item.sourceIn ?? 0) + local / fps;
     if (item.sourceOut != null) (head as VideoItem).sourceOut = cutSec;
     (tail as VideoItem).sourceIn = cutSec;
+  } else if (item.type === "scene") {
+    // A scene is windowed onto an embedded composition by `sourceOffsetFrames`,
+    // which is the same idea as a media trim and needs the same treatment. Copy
+    // it to the tail unchanged and the second half REPLAYS the first — which is
+    // what cutRange (splitting at both edges of a cut) does to a branded card.
+    (tail as SceneItem).sourceOffsetFrames = (item.sourceOffsetFrames ?? 0) + local;
   }
   return withTrack(doc, found.track.id, (t) => ({
     ...t,
