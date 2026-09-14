@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import type { Project, ProjectMeta, AnimationType, Engine, ProjectSettings, SvgFile, StyleMode, TopicCardStyle, TransitionStyle } from "./types";
+import type { EditorDoc } from "./editor-doc";
 
 const PROJECTS_DIR = path.join(process.cwd(), "data", "projects");
 
@@ -69,6 +70,15 @@ export interface CreateProjectData {
   transitionStyle?: TransitionStyle;
   useSfx?: boolean;
   collectionId?: string;
+  /**
+   * Start the project as a TIMELINE rather than a code file.
+   *
+   * Until now a document could only be born by converting a finished project
+   * with "Open in editor", which is why 5 of 311 projects had one. A project
+   * created with a doc opens straight into the visual editor, and its chat
+   * edits the timeline instead of writing TSX (ChatPanel branches on this).
+   */
+  doc?: EditorDoc;
 }
 
 export function getProjectMediaDir(id: string): string {
@@ -109,8 +119,12 @@ export function createProject(data: CreateProjectData): Project {
   // Video projects get an internal media folder under the project directory.
   // Uploaded files land here; mediaFolder always points to it for the rest of
   // the app (transcribe, /api/media/*, generate) to find files.
+  //
+  // A doc-backed project gets one too, whatever its type: the timeline accepts
+  // footage dropped straight onto a track (DocTimeline's handleDrop posts to
+  // /api/media/<id>/upload), and that has nowhere to land without this.
   let mediaFolder: string | undefined;
-  if (data.animationType === "video") {
+  if (data.animationType === "video" || data.doc) {
     mediaFolder = getProjectMediaDir(id);
     ensureDir(mediaFolder);
   }
@@ -139,6 +153,7 @@ export function createProject(data: CreateProjectData): Project {
     // SFX defaults on for everything except terminal recordings.
     useSfx: data.useSfx ?? data.animationType !== "terminal",
     collectionId: data.collectionId,
+    doc: data.doc,
     createdAt: now,
     updatedAt: now,
   };

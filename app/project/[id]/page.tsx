@@ -27,7 +27,7 @@ import TypeBadge from "@/components/ui/TypeBadge";
 import Segmented from "@/components/ui/Segmented";
 import { useCodeHistory } from "@/hooks/useCodeHistory";
 import { useDocHistory } from "@/hooks/useDocHistory";
-import { addItem, docDuration, docFromScene, findItem, fullFrameLayout, makeId, trackWithRoomAt, updateItem, type EditorDoc, type SceneItem } from "@/lib/editor-doc";
+import { addItem, docDuration, docFromScene, emptyDoc, findItem, fullFrameLayout, makeId, trackWithRoomAt, updateItem, type EditorDoc, type SceneItem } from "@/lib/editor-doc";
 import { docFromVideoEdit, suspiciousSegments } from "@/lib/editor-import";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import type { PlayerRef } from "@remotion/player";
@@ -463,10 +463,15 @@ export default function ProjectEditor() {
   const docView = doc && !showCodeEditor ? doc : undefined;
 
   const { durationInFrames, fps: extractedFps, sceneError } = useMemo(() => {
-    if (!code || !code.trim()) return { durationInFrames: 250, fps: project?.settings.fps ?? 25, sceneError: undefined };
+    // The document comes FIRST. Every doc so far was born from "Open in editor"
+    // on a project that had code, so `code` was never empty beside a doc and the
+    // order never mattered. A project born AS a timeline has no code at all, and
+    // the old order pinned it to 250 frames: the timeline stopped scrubbing past
+    // frame 249 and Export reported the wrong runtime.
     if (docView) {
       return { durationInFrames: docDuration(docView), fps: docView.size.fps, sceneError: undefined };
     }
+    if (!code || !code.trim()) return { durationInFrames: 250, fps: project?.settings.fps ?? 25, sceneError: undefined };
     const result = evalSceneCode(code);
     return {
       durationInFrames: result?.durationInFrames ?? 250,
@@ -953,6 +958,14 @@ export default function ProjectEditor() {
             onClick={async () => {
               const evaluated = evalSceneCode(code);
               const size = { width, height, fps: evaluated?.fps ?? project.settings.fps };
+
+              // Nothing written yet: start an EMPTY timeline rather than wrapping
+              // an empty string as a scene block. This is the only way a document
+              // can currently be born from scratch in the UI.
+              if (!code.trim()) {
+                commitDoc(emptyDoc(size));
+                return;
+              }
 
               // The importer records how long the source file is so the timeline
               // can show the right slice of its filmstrip on each clip.

@@ -209,8 +209,14 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function ChatPanel
     // sendMessage is stable for the lifetime of the component (defined inline),
     // but its closure captures props — re-bind the handle whenever any prop
     // sendMessage reads changes, otherwise runWithPrompt would use stale state.
+    //
+    // `doc` MUST be in here. sendMessage branches on it to choose /api/edit-doc
+    // over /api/generate, and a timeline created AFTER mount (the "Start a
+    // timeline" button) would otherwise leave runWithPrompt closed over
+    // doc === undefined — so a first pass would write a TSX file and silently
+    // ignore the timeline it was supposed to fill.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [chatHistory, currentCode, isGenerating, projectSettings, animationType, notionContent, scriptWithTimestamps, svgContents, projectId, styleMode, topicCardStyle, transitionStyle, useSfx, attachedSvgs, sceneError],
+    [chatHistory, currentCode, isGenerating, projectSettings, animationType, notionContent, scriptWithTimestamps, svgContents, projectId, styleMode, topicCardStyle, transitionStyle, useSfx, attachedSvgs, sceneError, doc, selectedIds, playheadFrame, onDocChanged],
   );
 
   async function sendMessage(text: string, overrideCode?: string, opts: { force?: boolean } = {}) {

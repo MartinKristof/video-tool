@@ -236,7 +236,8 @@ export default function ExportDialog({
   }, []);
 
   async function handleExport() {
-    if (!code.trim()) return;
+    // A timeline-backed project has no code; /api/render takes the doc instead.
+    if (!code.trim() && !doc) return;
 
     setStatus("queued");
     setProgress(0);
