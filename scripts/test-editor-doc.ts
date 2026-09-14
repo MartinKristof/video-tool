@@ -587,6 +587,7 @@ head("a Smart-trim plan becomes an editable timeline");
 
   // Through the real planner, from a real transcript with a real silence.
   const transcript: Transcript = {
+    text: "one two three",
     words: [
       { text: "one", start: 0.0, end: 0.4 },
       { text: "two", start: 0.4, end: 0.9 },
@@ -594,7 +595,8 @@ head("a Smart-trim plan becomes an editable timeline");
       { text: "three", start: 3.9, end: 4.4 },
     ],
     segments: [], durationSeconds: 5, language: "en",
-  } as Transcript;
+    model: "test", generatedAt: new Date(0).toISOString(),
+  };
   const real = planCuts(transcript, DEFAULT_THRESHOLDS);
   const realDoc = docFromCutPlan(real, SIZE, "/api/media/p/a.mp4")!;
   a(realDoc.tracks[0].items.length === real.ranges.length, "a real plan maps range-for-range");

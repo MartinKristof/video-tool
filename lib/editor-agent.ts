@@ -39,6 +39,7 @@ import {
   docDuration,
   duplicateItem,
   findItem,
+  fullFrameLayout,
   getAsset,
   hasSource,
   isValidDoc,
@@ -59,6 +60,7 @@ import {
   type CaptionToken,
   type EditorDoc,
   type EditorItem,
+  type SceneItem,
   type SolidItem,
   type TextItem,
   type TextStyle,
@@ -74,6 +76,9 @@ import {
   wordsInRange,
 } from "./editor-transcript";
 import type { TranscriptWord } from "./transcribe";
+import { describeParams, settableKeys, type SnippetEntry } from "./snippet-catalog";
+import { renderSnippet } from "./snippet-template";
+import { sceneFramesAtFps } from "./scene-eval";
 
 /** Everything a tool may need that does not live in the document. */
 export interface AgentContext {
@@ -89,6 +94,12 @@ export interface AgentContext {
   }[];
   /** Word-level transcripts keyed by ASSET id. */
   transcripts?: Record<string, TranscriptWord[]>;
+  /**
+   * The branded scene library. Assembled by the route, not read from disk here —
+   * this module's contract is that it is pure, which is what lets every failure
+   * mode be tested offline.
+   */
+  snippets?: SnippetEntry[];
   playheadFrame?: number;
   selectedIds?: string[];
 }
@@ -497,6 +508,43 @@ export const DOC_TOOLS: Anthropic.Tool[] = [
         highlightColor: { type: "string" },
       },
       required: ["itemId"],
+    },
+  },
+  {
+    name: "list_snippets",
+    description:
+      "List the project's branded scenes — the ready-made, on-brand blocks (end card, lower third, stat callout, intro card and so on). Use one of these rather than building a card out of text and shapes: they are the house look, they animate correctly, and the person can reopen and reword one afterwards.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "describe_snippet",
+    description:
+      "The words and settings one branded scene accepts, with their defaults. Call this before add_snippet whenever you intend to change any of its text — guessing a parameter name does nothing.",
+    input_schema: {
+      type: "object",
+      properties: { id: { type: "string", description: "A snippet id from list_snippets." } },
+      required: ["id"],
+    },
+  },
+  {
+    name: "add_snippet",
+    description:
+      "Place a branded scene on the timeline, optionally with your own words in it. Its length comes from the scene itself, converted to this document's frame rate. Anything you place here stays editable: the person can reopen its form and reword it later.",
+    input_schema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "A snippet id from list_snippets." },
+        values: {
+          type: "object",
+          description:
+            "Parameter values, keyed exactly as describe_snippet lists them. Omit to use the scene's own defaults.",
+        },
+        fromFrame: { type: "integer", description: "Omit to place at the playhead." },
+        atEnd: { type: "boolean", description: "Place it after everything already on the track — the usual choice for an end card." },
+        durationInFrames: { type: "integer", description: "Omit to use the scene's own length, which is almost always right." },
+        trackId: { type: "string", description: "Omit to pick a track with room. A card that should sit OVER footage needs its own track." },
+      },
+      required: ["id"],
     },
   },
   {
@@ -1006,6 +1054,81 @@ export function applyDocTool(
         );
       }
 
+      case "list_snippets": {
+        const all = ctx.snippets ?? [];
+        if (!all.length) throw new ToolError("The branded scene library is not available here.");
+        const lines = all.map((sn) => {
+          const params = settableKeys(sn.schema).length;
+          const at = sceneFramesAtFps({ durationInFrames: sn.durationInFrames, fps: sn.fps }, fps);
+          return `  ${sn.id} — ${sn.name}${sn.subtitle ? `: ${sn.subtitle}` : ""} · ${at}f (${secs(at, fps)}s)${params ? ` · ${params} settable` : " · no parameters"}`;
+        });
+        return {
+          doc,
+          result: `${all.length} branded scenes. Lengths are already converted to this document's ${fps}fps.\n${lines.join("\n")}`,
+        };
+      }
+
+      case "describe_snippet": {
+        const id = str(input, "id");
+        const sn = findSnippet(id);
+        const at = sceneFramesAtFps({ durationInFrames: sn.durationInFrames, fps: sn.fps }, fps);
+        return {
+          doc,
+          result: `${sn.id} — ${sn.name}\nRuns ${at} frames (${secs(at, fps)}s) in this document.\nParameters:\n${describeParams(sn.schema)}`,
+        };
+      }
+
+      case "add_snippet": {
+        const id = str(input, "id");
+        const sn = findSnippet(id);
+        const values = (input.values ?? {}) as Record<string, unknown>;
+
+        // renderSnippet walks the SCHEMA and skips anything it has no parameter
+        // for, so a misspelt key is a silent no-op the model would believe had
+        // worked. Reject it with the real list instead.
+        const allowed = settableKeys(sn.schema);
+        const unknown = Object.keys(values).filter((k) => !allowed.includes(k));
+        if (unknown.length) {
+          throw new ToolError(
+            `${sn.id} has no parameter called ${unknown.map((u) => `"${u}"`).join(", ")}. It accepts: ${allowed.join(", ") || "(none)"}. Call describe_snippet first.`,
+          );
+        }
+
+        const code = Object.keys(values).length && sn.schema
+          ? renderSnippet(sn.code, sn.schema, values)
+          : sn.code;
+
+        // Its own length, restated at THIS document's rate — a 25fps scene needs
+        // more frames in a 30fps document or it is cut off mid-animation.
+        const natural = sceneFramesAtFps({ durationInFrames: sn.durationInFrames, fps: sn.fps }, fps);
+        const duration = Math.max(1, Math.round(num(input, "durationInFrames") ?? natural));
+
+        const trackId = input.trackId != null ? requireTrack(doc, input.trackId) : undefined;
+        const from =
+          input.atEnd === true
+            ? trackEnd(doc, trackId)
+            : Math.max(0, Math.round(num(input, "fromFrame") ?? playhead));
+
+        const item: SceneItem = {
+          type: "scene",
+          id: makeId("snippet"),
+          from,
+          durationInFrames: duration,
+          layout: fullFrameLayout(doc.size),
+          code,
+          // The identity and the values it was built from. The substitution runs
+          // ONE WAY, so without this the parameter form could never be reopened —
+          // which is the difference between a block the person can reword and a
+          // block they are stuck with.
+          snippet: { id: sn.id, values },
+        };
+        const set = Object.keys(values);
+        return place(
+          item, input.trackId, from, duration,
+          `Placed "${sn.name}"${set.length ? ` with ${set.join(", ")} set` : " with its default text"}`,
+        );
+      }
+
       case "add_track": {
         const next = addTrack(doc, str(input, "name"));
         const made = next.tracks[next.tracks.length - 1];
@@ -1113,6 +1236,18 @@ export function applyDocTool(
     return end;
   }
 
+  function findSnippet(id: string | undefined): SnippetEntry {
+    if (!id) throw new ToolError("id is required — call list_snippets for the ids.");
+    const all = ctx.snippets ?? [];
+    const found = all.find((sn) => sn.id === id) ?? all.find((sn) => sn.id.toLowerCase() === id.toLowerCase());
+    if (!found) {
+      throw new ToolError(
+        `No branded scene called "${id}". Available: ${all.map((sn) => sn.id).join(", ") || "(none)"}.`,
+      );
+    }
+    return found;
+  }
+
   function findMedia(file: string) {
     const media = ctx.mediaFiles?.find((m) => m.file === file || m.file.endsWith(`/${file}`));
     if (!media) {
@@ -1185,6 +1320,30 @@ export function applyDocTool(
       result: `${what} as ${item.id} on track ${landing}, ${span(landed.from, landed.durationInFrames, fps)}.`,
     };
   }
+}
+
+/**
+ * The tool list with the real snippet ids pinned into the two tools that take
+ * one. Tools sit BEFORE the system block in the cache prefix, so the enum rides
+ * the prompt cache; putting the library in `describeDoc` instead would land it
+ * in the last user message and be re-paid on every single turn.
+ */
+export function toolsWithSnippets(tools: Anthropic.Tool[], ids: string[]): Anthropic.Tool[] {
+  if (!ids.length) return tools.filter((t) => !t.name.endsWith("_snippet") && t.name !== "list_snippets");
+  return tools.map((t) => {
+    if (t.name !== "add_snippet" && t.name !== "describe_snippet") return t;
+    const schema = t.input_schema as { properties?: Record<string, unknown> };
+    return {
+      ...t,
+      input_schema: {
+        ...t.input_schema,
+        properties: {
+          ...schema.properties,
+          id: { type: "string", enum: ids, description: "A branded scene id." },
+        },
+      },
+    } as Anthropic.Tool;
+  });
 }
 
 /** Names the route dispatches here, rather than handling itself. */

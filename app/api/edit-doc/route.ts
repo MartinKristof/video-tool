@@ -7,7 +7,8 @@ import { renderSampleFrames, sampleFrameNumbers } from "@/lib/render-queue";
 import { getProject } from "@/lib/projects";
 import { sceneCodeFromDoc } from "@/lib/editor-render";
 import { docDuration, isValidDoc, type AssetKind, type EditorDoc } from "@/lib/editor-doc";
-import { applyDocTool, describeDoc, DOC_TOOLS, DOC_TOOL_NAMES, type AgentContext } from "@/lib/editor-agent";
+import { applyDocTool, describeDoc, DOC_TOOLS, DOC_TOOL_NAMES, toolsWithSnippets, type AgentContext } from "@/lib/editor-agent";
+import { loadSnippetCatalog } from "@/lib/snippet-catalog";
 import { readCachedTranscript, transcribeWithCache, type TranscriptWord } from "@/lib/transcribe";
 import { probeWithCache } from "@/lib/probe";
 import type { ChatMessage } from "@/lib/types";
@@ -180,13 +181,19 @@ export async function POST(request: Request) {
     selectedIds,
     mediaFiles: mediaFolder && projectId ? await listMedia(projectId, mediaFolder) : [],
     transcripts: mediaFolder && projectId ? await cachedTranscripts(incomingDoc, projectId, mediaFolder) : {},
+    // Read here rather than in editor-agent, which is pure by contract so every
+    // failure mode stays testable with no fs and no network.
+    snippets: loadSnippetCatalog(),
   };
 
   // The bundle server runs on its own port, so a root-relative "/api/media/..."
   // src would 404 against it. Same rewrite /api/render does.
   const origin = new URL(request.url).origin;
 
-  const tools: Anthropic.Tool[] = [...DOC_TOOLS, RENDER_TOOL, ...(mediaFolder ? [TRANSCRIBE_TOOL] : [])];
+  const tools: Anthropic.Tool[] = toolsWithSnippets(
+    [...DOC_TOOLS, RENDER_TOOL, ...(mediaFolder ? [TRANSCRIBE_TOOL] : [])],
+    (ctx.snippets ?? []).map((sn) => sn.id),
+  );
 
   // Cache the prompt + tool list. Everything volatile (the outline, the playhead,
   // the selection) goes in the LAST USER MESSAGE, never in the system block —

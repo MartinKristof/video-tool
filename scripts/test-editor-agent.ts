@@ -27,6 +27,8 @@ import type { TranscriptWord } from "../lib/transcribe";
 import fs from "fs";
 import path from "path";
 import { sceneFramesAtFps, sceneMeta } from "../lib/scene-eval";
+import { loadSnippetCatalog } from "../lib/snippet-catalog";
+import { toolsWithSnippets } from "../lib/editor-agent";
 
 let pass = 0, fail = 0;
 const a = (c: boolean, m: string) => { if (c) pass++; else { fail++; console.log("  FAIL: " + m); } };
@@ -555,6 +557,98 @@ head("every branded scene reports its real length, computed ones included");
   a(sceneFramesAtFps({ durationInFrames: 150, fps: 30 }, 30) === 150, "a matching rate is left alone");
   a(sceneFramesAtFps({ durationInFrames: 100, fps: 30 }, 25) === 83, "and it shortens the other way");
   a(sceneFramesAtFps({ durationInFrames: 60, fps: 0 }, 30) === 60, "a missing rate falls through rather than dividing by zero");
+}
+
+head("the AI can place a branded scene, and it stays re-editable");
+{
+  const catalog = loadSnippetCatalog();
+  const branded = ctx({ playheadFrame: 0, snippets: catalog });
+  const endCard = catalog.find((c) => c.id === "EndCard")!;
+
+  const listed = applyDocTool(base(), "list_snippets", {}, branded);
+  a(!listed.isError && listed.result.includes("EndCard"), "list_snippets names the scenes");
+  a(!listed.result.includes("import React"), "and never leaks their code");
+
+  const described = applyDocTool(base(), "describe_snippet", { id: "EndCard" }, branded);
+  a(!described.isError && described.result.includes("CTA_HEADLINE"), "describe_snippet lists the parameters");
+
+  // Placement with the scene's own text.
+  const plain = applyDocTool(base(), "add_snippet", { id: "EndCard", fromFrame: 0 }, branded);
+  a(!plain.isError, `placed with defaults (got: ${plain.result})`);
+  const item = plain.doc.tracks.flatMap((t) => t.items).find((i) => i.type === "scene")!;
+  a(item.type === "scene", "it is a scene block");
+  if (item.type === "scene") {
+    a(item.snippet?.id === "EndCard", "carrying its identity, so the form can be reopened");
+    a(item.code.includes("Try Apify for free"), "with the scene's own default text");
+  }
+  // EndCard is authored at 30fps; this document is 30fps, so it is unchanged.
+  a(item.durationInFrames === sceneFramesAtFps(endCard, FPS), "its length is the scene's own, at this document's rate");
+
+  // Placement with words of ours — and the provenance that makes it re-editable.
+  const worded = applyDocTool(
+    base(), "add_snippet",
+    { id: "EndCard", fromFrame: 0, values: { CTA_HEADLINE: "Start scraping today" } },
+    branded,
+  );
+  const w = worded.doc.tracks.flatMap((t) => t.items).find((i) => i.type === "scene")!;
+  if (w.type === "scene") {
+    a(/const CTA_HEADLINE = "Start scraping today"/.test(w.code), "the words really went in");
+    // The substituter is line-anchored to `const `, deliberately — so the default
+    // still appears in the file's header COMMENT, and must not be counted as a
+    // failed replacement. What matters is that the declaration changed.
+    a(!/const CTA_HEADLINE = "Try Apify for free"/.test(w.code), "replacing the declaration, not sitting beside it");
+    a(w.snippet?.values.CTA_HEADLINE === "Start scraping today", "and the values are stored for the form");
+  }
+
+  // THE failure mode: renderSnippet walks the schema and skips keys it doesn't
+  // know, so a misspelt parameter silently does nothing and the model believes
+  // it worked. It has to be refused.
+  const msg = refused(
+    base(), "add_snippet",
+    { id: "EndCard", values: { CTA_HEADLINE_TEXT: "nope" } },
+    "a parameter name that doesn't exist", branded,
+  );
+  a(msg.includes("CTA_HEADLINE"), "and the real parameter names come back");
+
+  refused(base(), "add_snippet", { id: "NotAScene" }, "an invented snippet id", branded);
+  refused(base(), "describe_snippet", { id: "NotAScene" }, "an invented snippet id", branded);
+  refused(base(), "list_snippets", {}, "no library loaded", ctx());
+
+  // Base64 image slots must never be offered to the model: they would land in
+  // project.json, which is rewritten by the autosave every two seconds.
+  const ai = catalog.find((c) => c.id === "AiChat")!;
+  const aiParams = applyDocTool(base(), "describe_snippet", { id: "AiChat" }, branded).result;
+  a(!!ai.schema?.params.ANSWER_IMAGES, "AiChat really does have an images parameter");
+  a(!aiParams.includes("ANSWER_IMAGES"), "but it is not offered to the model");
+  refused(base(), "add_snippet", { id: "AiChat", values: { ANSWER_IMAGES: ["data:image/png;base64,AAAA"] } },
+    "an images parameter", branded);
+
+  // A 25fps scene must be given more frames in a 30fps document.
+  const promptBox = catalog.find((c) => c.id === "PromptBox")!;
+  a(promptBox.fps === 25 && promptBox.durationInFrames === 90, "PromptBox is 90f at 25fps");
+  const pb = applyDocTool(base(), "add_snippet", { id: "PromptBox", fromFrame: 0 }, branded);
+  const pbItem = pb.doc.tracks.flatMap((t) => t.items).find((i) => i.type === "scene")!;
+  a(pbItem.durationInFrames === 108, `and lands as 108f in a 30fps document (got ${pbItem.durationInFrames})`);
+
+  // Appending an end card after a cut is the common case.
+  let cut = base();
+  cut = addItem(cut, t0(cut), clip("v", 0, 300));
+  const appended = applyDocTool(cut, "add_snippet", { id: "EndCard", atEnd: true }, branded);
+  const card = appended.doc.tracks.flatMap((t) => t.items).find((i) => i.type === "scene")!;
+  a(card.from === 300, "atEnd puts the card after the footage, not over its start");
+  a(isValidDoc(appended.doc), "and the result is valid");
+}
+
+head("the snippet ids are pinned into the tool schema, not the prompt");
+{
+  const ids = ["EndCard", "IntroCard"];
+  const withIds = toolsWithSnippets([...DOC_TOOLS], ids);
+  const add = withIds.find((t) => t.name === "add_snippet")!;
+  const idProp = (add.input_schema as { properties: Record<string, { enum?: string[] }> }).properties.id;
+  a(idProp.enum?.length === 2, "the enum carries the real ids");
+  // Tools sit before the system block in the cache prefix, so this is paid once.
+  const none = toolsWithSnippets([...DOC_TOOLS], []);
+  a(!none.some((t) => t.name === "add_snippet"), "with no library, the snippet tools are withdrawn entirely");
 }
 
 head("an unknown tool is an error, not a crash");
