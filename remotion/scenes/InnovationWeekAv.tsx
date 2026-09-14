@@ -2,8 +2,9 @@
 // 2560 x 1440 (16:9) · 30 fps · 15 s · silent · English.
 //
 // Same story as the LED spot with room to breathe: text anchored to a left
-// vertical band, a persistent Apify symbol bug top-left, and four beats handed
-// off by ONE continuous upward scroll on a spike-then-decay velocity curve.
+// vertical band, a persistent Apify symbol bug top-right, and four beats stacked
+// one STEP apart inside a single column, handed off by ONE continuous upward
+// roll — the outgoing beat is still leaving as the next arrives.
 // Rules honoured: no fade from/to black, no blur on entrances, no slide/wipe
 // transitions, every reveal combines opacity + translate + scale, nothing
 // freezes (perlin ambient drift on every hold).
@@ -47,126 +48,121 @@ const FONT_CSS = `
 const SCROLL_1 = 108;
 const SCROLL_2 = 228;
 const SCROLL_3 = 333;
-const SCROLL_DUR = 50;
+const SCROLL_DUR = 58;
+// Beats sit 0.82 canvas heights apart, not a full height, so the roll never
+// leaves an empty frame between two beats.
+const STEP_RATIO = 0.82;
 
-// ---- Spike-then-decay easing ------------------------------------------------
+// ---- Roll easing ------------------------------------------------------------
+// A velocity profile (smooth ramp to an early peak, exponential decay, then a
+// smoothstep tail that takes velocity to EXACTLY zero) integrated into a
+// position curve. Velocity starting and ending at zero is what makes the roll
+// arrive without the small jolt a clipped exponential leaves behind.
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
-function spikeVel(u: number): number {
-  const RAMP = 0.1;
-  const s = u < RAMP ? u / RAMP : 1;
-  const ramp = s * s * (3 - 2 * s);
-  const decay = Math.exp(-5 * Math.max(0, u - RAMP));
-  return ramp * (0.04 + 0.96 * decay);
+const RAMP = 0.12;
+const TAIL = 0.5;
+function rollVel(u: number): number {
+  const a = u < RAMP ? u / RAMP : 1;
+  const rampIn = a * a * (3 - 2 * a);
+  const decay = Math.exp(-2.6 * Math.max(0, u - RAMP));
+  let tail = 1;
+  if (u > 1 - TAIL) {
+    const s = (u - (1 - TAIL)) / TAIL;
+    tail = 1 - s * s * (3 - 2 * s);
+  }
+  return rampIn * decay * tail;
 }
-const SPIKE_N = 240;
-const SPIKE_FULL = (() => {
+// Integrated ONCE into a cumulative table and read back with linear
+// interpolation. Re-integrating every frame with a rounded sample count (the
+// obvious way to write this) quantises the position: consecutive frames then
+// advance by uneven amounts — 94px, 79px, 87px, 72px — and the roll visibly
+// stutters even though the curve itself is right. With the table the travel
+// decays monotonically to zero, frame by frame.
+const ROLL_N = 2048;
+const ROLL_CUM: number[] = (() => {
+  const c = [0];
   let a = 0;
-  for (let i = 0; i < SPIKE_N; i++) a += spikeVel((i + 0.5) / SPIKE_N);
-  return a;
+  for (let i = 0; i < ROLL_N; i++) {
+    a += rollVel((i + 0.5) / ROLL_N);
+    c.push(a);
+  }
+  return c.map((v) => v / a);
 })();
-function easeSpike(t: number): number {
+function easeRoll(t: number): number {
   if (t <= 0) return 0;
   if (t >= 1) return 1;
-  const m = Math.round(t * SPIKE_N);
-  let a = 0;
-  for (let i = 0; i < m; i++) a += spikeVel((i + 0.5) / SPIKE_N);
-  return a / SPIKE_FULL;
+  const x = t * ROLL_N;
+  const i = Math.floor(x);
+  return ROLL_CUM[i] + (ROLL_CUM[i + 1] - ROLL_CUM[i]) * (x - i);
 }
 
 type Preset = "SNAPPY" | "LIQUID" | "ELASTIC" | "GENTLE";
 
-// ---- Persistent background ---------------------------------------------------
-const Background: React.FC = () => {
-  const frame = useCurrentFrame();
-  const { width, height } = useVideoConfig();
-  const gx = width * 0.72 + ambientDrift(frame, width * 0.06, 280, "glow-x");
-  const gy = height * 0.5 + ambientDrift(frame, height * 0.08, 320, "glow-y");
-  const r = height * 0.85;
-  // A very faint, slowly drifting Apify symbol on the right gives the frame
-  // depth and asymmetry; it is decoration on the ground, never a hero.
-  const symW = height * 0.92;
-  const sx = width * 0.74 + ambientDrift(frame, 18, 240, "sym-x");
-  const sy = height * 0.5 + ambientDrift(frame, 12, 210, "sym-y");
-  return (
-    <AbsoluteFill style={{ backgroundColor: C.bg }}>
-      <div
-        style={{
-          position: "absolute",
-          left: gx - r,
-          top: gy - r,
-          width: r * 2,
-          height: r * 2,
-          borderRadius: "50%",
-          background:
-            "radial-gradient(circle, rgba(248,102,6,0.15) 0%, rgba(248,102,6,0.05) 38%, rgba(22,23,24,0) 68%)",
-        }}
-      />
-      <Img
-        src={staticFile("assets/apify/Apify symbol white.svg")}
-        style={{
-          position: "absolute",
-          left: sx - symW / 2,
-          top: sy - symW / 2,
-          width: symW,
-          height: symW,
-          opacity: 0.045,
-        }}
-      />
-      <AbsoluteFill
-        style={{
-          background:
-            "linear-gradient(90deg, rgba(0,0,0,0.16) 0%, rgba(0,0,0,0) 45%, rgba(0,0,0,0) 100%)",
-        }}
-      />
-    </AbsoluteFill>
-  );
-};
+// ---- Persistent background: flat brand ground, no glow, no watermark --------
+const Background: React.FC = () => (
+  <AbsoluteFill style={{ backgroundColor: C.bg }}>
+    <AbsoluteFill
+      style={{
+        background:
+          "linear-gradient(180deg, rgba(255,255,255,0.022) 0%, rgba(255,255,255,0) 42%, rgba(0,0,0,0) 66%, rgba(0,0,0,0.12) 100%)",
+      }}
+    />
+  </AbsoluteFill>
+);
 
-// ---- Words cascading in, one spring each --------------------------------------
-const Words: React.FC<{
-  words: string[];
+// ---- Type reveal ------------------------------------------------------------
+// Per character: pulled up into place on a spring while opacity lands in ~4
+// frames, so the letter is SOLID and SHARP long before the spring settles.
+// Decoupling the two is what stops the entrance reading as a fade.
+const Chars: React.FC<{
+  text: string;
   start: number;
-  stagger?: number;
   size: number;
-  accentLast?: boolean;
+  color?: string;
   weight?: number;
   preset?: Preset;
+  stagger?: number;
   seed: string;
-}> = ({ words, start, stagger = 6, size, accentLast = false, weight = 900, preset = "SNAPPY", seed }) => {
+}> = ({ text, start, size, color = C.text, weight = 900, preset = "SNAPPY", stagger = 1.3, seed }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const drift = ambientDrift(frame, 1.5, 86, seed);
   return (
     <div
       style={{
         display: "flex",
-        flexWrap: "nowrap",
-        gap: size * 0.22,
         fontFamily: FONT,
         fontWeight: weight,
         fontSize: size,
         lineHeight: 0.95,
         letterSpacing: "-0.03em",
-        whiteSpace: "nowrap",
+        color,
+        whiteSpace: "pre",
+        transform: `translateY(${drift}px)`,
       }}
     >
-      {words.map((w, i) => {
-        const last = i === words.length - 1;
-        const p = springIn(frame, fps, start + i * stagger, last && accentLast ? "ELASTIC" : preset);
-        const rise = interpolate(p, [0, 1], [size * 0.5, 0]);
-        const scale = interpolate(p, [0, 1], [0.9, 1]);
-        const drift = ambientDrift(frame, 1.4, 80 + i * 7, `${seed}-${i}`);
+      {Array.from(text).map((ch, i) => {
+        const d = start + i * stagger;
+        const p = springIn(frame, fps, d, preset);
+        const op = interpolate(frame, [d, d + 3], [0, 1], {
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+        });
+        const y = interpolate(p, [0, 1], [size * 0.45, 0]);
+        const sy = interpolate(p, [0, 1], [1.08, 1]);
+        const sx = interpolate(p, [0, 1], [0.96, 1]);
         return (
           <span
             key={i}
             style={{
               display: "inline-block",
-              color: last && accentLast ? C.orange : C.text,
-              opacity: p,
-              transform: `translateY(${rise + drift}px) scale(${scale})`,
-              transformOrigin: "0% 100%",
+              whiteSpace: "pre",
+              opacity: op,
+              transform: `translateY(${y}px) scale(${sx}, ${sy})`,
+              transformOrigin: "50% 100%",
             }}
           >
-            {w}
+            {ch}
           </span>
         );
       })}
@@ -174,7 +170,7 @@ const Words: React.FC<{
   );
 };
 
-// ---- Use-case row: orange dot pops first, then the text rises -------------------
+// ---- Use-case row: orange dot pops first, then the line arrives ---------------
 const Bullet: React.FC<{ text: string; start: number; size: number; seed: string }> = ({
   text,
   start,
@@ -185,17 +181,25 @@ const Bullet: React.FC<{ text: string; start: number; size: number; seed: string
   const { fps } = useVideoConfig();
   const pd = springIn(frame, fps, start, "ELASTIC");
   const pt = springIn(frame, fps, start + 4, "SNAPPY");
-  const dot = size * 0.26;
+  const opd = interpolate(frame, [start, start + 3], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const opt = interpolate(frame, [start + 4, start + 8], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const dot = size * 0.24;
   const drift = ambientDrift(frame, 1.5, 88, seed);
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: size * 0.32, transform: `translateY(${drift}px)` }}>
+    <div style={{ display: "flex", alignItems: "center", gap: size * 0.34, transform: `translateY(${drift}px)` }}>
       <div
         style={{
           width: dot,
           height: dot,
           borderRadius: "50%",
           background: C.orange,
-          opacity: pd,
+          opacity: opd,
           transform: `scale(${interpolate(pd, [0, 1], [0.2, 1])})`,
         }}
       />
@@ -208,8 +212,8 @@ const Bullet: React.FC<{ text: string; start: number; size: number; seed: string
           letterSpacing: "-0.02em",
           color: C.text,
           whiteSpace: "nowrap",
-          opacity: pt,
-          transform: `translateX(${interpolate(pt, [0, 1], [size * 0.25, 0])}px) translateY(${interpolate(pt, [0, 1], [size * 0.3, 0])}px) scale(${interpolate(pt, [0, 1], [0.94, 1])})`,
+          opacity: opt,
+          transform: `translateX(${interpolate(pt, [0, 1], [size * 0.22, 0])}px) translateY(${interpolate(pt, [0, 1], [size * 0.26, 0])}px) scale(${interpolate(pt, [0, 1], [0.96, 1])})`,
           transformOrigin: "0% 50%",
         }}
       >
@@ -230,6 +234,10 @@ const CountUp: React.FC<{ to: number; start: number; dur: number; size: number; 
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const p = springIn(frame, fps, start, "SNAPPY");
+  const op = interpolate(frame, [start, start + 4], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
   const t = interpolate(frame, [start, start + dur], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
@@ -248,8 +256,8 @@ const CountUp: React.FC<{ to: number; start: number; dur: number; size: number; 
         color: C.orange,
         whiteSpace: "nowrap",
         fontVariantNumeric: "tabular-nums",
-        opacity: p,
-        transform: `translateY(${interpolate(p, [0, 1], [size * 0.4, 0]) + drift}px) scale(${interpolate(p, [0, 1], [0.9, 1])})`,
+        opacity: op,
+        transform: `translateY(${interpolate(p, [0, 1], [size * 0.36, 0]) + drift}px) scale(${interpolate(p, [0, 1], [0.96, 1])}, ${interpolate(p, [0, 1], [1.07, 1])})`,
         transformOrigin: "0% 100%",
       }}
     >
@@ -263,6 +271,10 @@ const Sub: React.FC<{ text: string; start: number; size: number; seed: string }>
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const p = springIn(frame, fps, start, "LIQUID");
+  const op = interpolate(frame, [start, start + 5], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
   const drift = ambientDrift(frame, 1.4, 92, seed);
   return (
     <div
@@ -274,8 +286,8 @@ const Sub: React.FC<{ text: string; start: number; size: number; seed: string }>
         letterSpacing: "-0.02em",
         color: C.muted,
         whiteSpace: "nowrap",
-        opacity: p,
-        transform: `translateY(${interpolate(p, [0, 1], [size * 0.5, 0]) + drift}px) scale(${interpolate(p, [0, 1], [0.96, 1])})`,
+        opacity: op,
+        transform: `translateY(${interpolate(p, [0, 1], [size * 0.45, 0]) + drift}px) scale(${interpolate(p, [0, 1], [0.97, 1])})`,
         transformOrigin: "0% 0%",
       }}
     >
@@ -284,40 +296,45 @@ const Sub: React.FC<{ text: string; start: number; size: number; seed: string }>
   );
 };
 
-// ---- End lockup ------------------------------------------------------------------------
+// ---- End lockup: wordmark + plain apify.com (no pill) --------------------------------
 const Lockup: React.FC<{ start: number }> = ({ start }) => {
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
   const p1 = springIn(frame, fps, start, "LIQUID");
   const p2 = springIn(frame, fps, start + 10, "LIQUID");
+  const op1 = interpolate(frame, [start, start + 6], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const op2 = interpolate(frame, [start + 10, start + 16], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
   const wmW = width * 0.42;
   const wmH = wmW * (141 / 512);
   const d1 = ambientDrift(frame, 2, 110, "wm");
-  const d2 = ambientDrift(frame, 1.5, 95, "pill");
+  const d2 = ambientDrift(frame, 1.5, 95, "url");
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: height * 0.07 }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: height * 0.065 }}>
       <Img
         src={staticFile("assets/apify/Apify Logo white Wordmark.svg")}
         style={{
           width: wmW,
           height: wmH,
-          opacity: p1,
-          transform: `translateY(${interpolate(p1, [0, 1], [wmH * 0.5, 0]) + d1}px) scale(${interpolate(p1, [0, 1], [0.88, 1])})`,
+          opacity: op1,
+          transform: `translateY(${interpolate(p1, [0, 1], [wmH * 0.42, 0]) + d1}px) scale(${interpolate(p1, [0, 1], [0.9, 1])})`,
         }}
       />
       <div
         style={{
           fontFamily: FONT,
           fontWeight: 500,
-          fontSize: height * 0.052,
-          color: C.text,
-          letterSpacing: "-0.01em",
+          fontSize: height * 0.055,
+          color: C.muted,
+          letterSpacing: "0.01em",
           lineHeight: 1,
-          border: `${Math.max(2, height * 0.004)}px solid ${C.orange}`,
-          borderRadius: 999,
-          padding: `${height * 0.02}px ${height * 0.05}px`,
-          opacity: p2,
-          transform: `translateY(${interpolate(p2, [0, 1], [40, 0]) + d2}px) scale(${interpolate(p2, [0, 1], [0.92, 1])})`,
+          opacity: op2,
+          transform: `translateY(${interpolate(p2, [0, 1], [34, 0]) + d2}px) scale(${interpolate(p2, [0, 1], [0.97, 1])})`,
         }}
       >
         apify.com
@@ -326,7 +343,7 @@ const Lockup: React.FC<{ start: number }> = ({ start }) => {
   );
 };
 
-// ---- Persistent symbol bug, top-right (outside the scroll, present from frame 0) ------
+// ---- Persistent symbol bug, top-right (outside the roll, present from frame 0) -------
 const Bug: React.FC = () => {
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
@@ -353,15 +370,16 @@ export default function InnovationWeekAv() {
   const frame = useCurrentFrame();
   const { width, height } = useVideoConfig();
 
-  const scroll =
-    height *
-    (easeSpike(clamp01((frame - SCROLL_1) / SCROLL_DUR)) +
-      easeSpike(clamp01((frame - SCROLL_2) / SCROLL_DUR)) +
-      easeSpike(clamp01((frame - SCROLL_3) / SCROLL_DUR)));
+  const STEP = height * STEP_RATIO;
+  const roll =
+    STEP *
+    (easeRoll(clamp01((frame - SCROLL_1) / SCROLL_DUR)) +
+      easeRoll(clamp01((frame - SCROLL_2) / SCROLL_DUR)) +
+      easeRoll(clamp01((frame - SCROLL_3) / SCROLL_DUR)));
 
   const left = width * 0.08;
   const headline = Math.round(height * 0.15);
-  const bullet = Math.round(height * 0.1);
+  const bullet = Math.round(height * 0.095);
   const stat = Math.round(height * 0.3);
   const sub = Math.round(height * 0.068);
 
@@ -369,39 +387,43 @@ export default function InnovationWeekAv() {
   const C0 = SCROLL_2 + 3;
   const D0 = SCROLL_3 + 6;
 
-  const slot = (i: number, align: "flex-start" | "center"): React.CSSProperties => ({
+  // Each beat is anchored by its CENTRE, one STEP apart.
+  const slot = (i: number, align: "flex-start" | "center", gap = 0): React.CSSProperties => ({
     position: "absolute",
     left: align === "center" ? 0 : left,
     right: align === "center" ? 0 : left,
-    top: i * height,
-    height,
+    top: i * STEP + height * 0.5,
+    transform: "translateY(-50%)",
     display: "flex",
     flexDirection: "column",
     alignItems: align,
-    justifyContent: "center",
+    gap,
   });
 
   return (
     <AbsoluteFill style={{ fontFamily: FONT }}>
       <style>{FONT_CSS}</style>
       <Background />
-      <div style={{ position: "absolute", inset: 0, transform: `translateY(${-scroll}px)` }}>
+      <div style={{ position: "absolute", inset: 0, transform: `translateY(${-roll}px)` }}>
         {/* Beat A — Turn any website into data. */}
-        <div style={{ ...slot(0, "flex-start"), gap: headline * 0.12 }}>
-          <Words words={["Turn", "any", "website"]} start={-6} size={headline} seed="a" />
-          <Words words={["into", "data."]} start={14} size={headline} accentLast seed="b" />
+        <div style={slot(0, "flex-start", headline * 0.14)}>
+          <Chars text="Turn any website" start={-6} size={headline} preset="SNAPPY" seed="a" />
+          <div style={{ display: "flex" }}>
+            <Chars text="into " start={16} size={headline} preset="LIQUID" stagger={1.5} seed="b" />
+            <Chars text="data." start={24} size={headline} color={C.orange} preset="ELASTIC" stagger={1.1} seed="c" />
+          </div>
         </div>
 
         {/* Beat B — four things people do with Apify */}
-        <div style={{ ...slot(1, "flex-start"), gap: bullet * 0.55 }}>
+        <div style={slot(1, "flex-start", bullet * 0.55)}>
           <Bullet text="Get web data" start={B0} size={bullet} seed="u0" />
-          <Bullet text="Generate leads" start={B0 + 10} size={bullet} seed="u1" />
-          <Bullet text="Monitor competitors" start={B0 + 20} size={bullet} seed="u2" />
-          <Bullet text="Power AI agents" start={B0 + 30} size={bullet} seed="u3" />
+          <Bullet text="Generate leads" start={B0 + 9} size={bullet} seed="u1" />
+          <Bullet text="Monitor competitors" start={B0 + 18} size={bullet} seed="u2" />
+          <Bullet text="Power AI agents" start={B0 + 27} size={bullet} seed="u3" />
         </div>
 
         {/* Beat C — the Store number */}
-        <div style={{ ...slot(2, "flex-start"), gap: sub * 0.5 }}>
+        <div style={slot(2, "flex-start", sub * 0.5)}>
           <CountUp to={68000} start={C0} dur={54} size={stat} seed="s0" />
           <Sub text="ready-made tools in Apify Store" start={C0 + 10} size={sub} seed="s1" />
         </div>
