@@ -27,7 +27,7 @@ function NumberField({
   value, onCommit, step = 1, min, max, precision = 0, suffix, disabled,
 }: {
   value: number;
-  onCommit: (n: number) => void;
+  onCommit: (n: number, opts?: { transient?: boolean }) => void;
   step?: number;
   min?: number;
   max?: number;
@@ -66,7 +66,8 @@ export default function EditorInspector({
 }: {
   doc: EditorDoc;
   selectedIds: Set<string>;
-  onChange: (next: EditorDoc) => void;
+  /** `transient` values come from a drag in progress and must not be recorded for undo. */
+  onChange: (next: EditorDoc, opts?: { transient?: boolean }) => void;
   /** Opens the snippet's parameter form, for blocks that came from the library. */
   onEditSnippet?: (itemId: string) => void;
 }) {
@@ -85,7 +86,10 @@ export default function EditorInspector({
 
   const item: EditorItem = found.item;
   const l = item.layout;
-  const patchLayout = (p: Parameters<typeof setLayout>[2]) => onChange(setLayout(doc, item.id, p));
+  const patchLayout = (
+    p: Parameters<typeof setLayout>[2],
+    opts?: { transient?: boolean },
+  ) => onChange(setLayout(doc, item.id, p), opts);
 
   return (
     <div style={{ padding: 10, overflowY: "auto", height: "100%" }}>
@@ -96,13 +100,13 @@ export default function EditorInspector({
       <Section title="Transform">
         <div style={row}>
           <span style={label}>Position</span>
-          <NumberField value={l.x} onCommit={(n) => patchLayout({ x: n })} />
-          <NumberField value={l.y} onCommit={(n) => patchLayout({ y: n })} />
+          <NumberField value={l.x} onCommit={(n, o) => patchLayout({ x: n }, o)} />
+          <NumberField value={l.y} onCommit={(n, o) => patchLayout({ y: n }, o)} />
         </div>
         <div style={row}>
           <span style={label}>Size</span>
-          <NumberField value={l.width} onCommit={(n) => patchLayout({ width: Math.max(8, n) })} />
-          <NumberField value={l.height} onCommit={(n) => patchLayout({ height: Math.max(8, n) })} />
+          <NumberField value={l.width} onCommit={(n, o) => patchLayout({ width: Math.max(8, n) }, o)} />
+          <NumberField value={l.height} onCommit={(n, o) => patchLayout({ height: Math.max(8, n) }, o)} />
         </div>
         <div style={row}>
           <span style={label}>Scale</span>
@@ -110,7 +114,7 @@ export default function EditorInspector({
             value={Math.round((l.width / doc.size.width) * 100)}
             suffix="%"
             min={1}
-            onCommit={(pct) => {
+            onCommit={(pct, o) => {
               // Scale about the centre, so resizing doesn't shove the item across
               // the frame — which is what makes a percentage field usable at all.
               const ratio = l.height / l.width;
@@ -121,14 +125,14 @@ export default function EditorInspector({
                 height,
                 x: Math.round(l.x + (l.width - width) / 2),
                 y: Math.round(l.y + (l.height - height) / 2),
-              });
+              }, o);
             }}
           />
           <span style={{ flex: 1 }} />
         </div>
         <div style={row}>
           <span style={label}>Rotation</span>
-          <NumberField value={l.rotation ?? 0} suffix="°" onCommit={(n) => patchLayout({ rotation: n })} />
+          <NumberField value={l.rotation ?? 0} suffix="°" onCommit={(n, o) => patchLayout({ rotation: n }, o)} />
           <button onClick={() => patchLayout({ rotation: ((l.rotation ?? 0) + 90) % 360 })} style={{ ...input, width: 40, cursor: "pointer" }}>+90°</button>
         </div>
         <div style={row}>
@@ -138,13 +142,13 @@ export default function EditorInspector({
             suffix="%"
             min={0}
             max={100}
-            onCommit={(n) => patchLayout({ opacity: n / 100 })}
+            onCommit={(n, o) => patchLayout({ opacity: n / 100 }, o)}
           />
           <span style={{ flex: 1 }} />
         </div>
         <div style={row}>
           <span style={label}>Corner radius</span>
-          <NumberField value={l.cornerRadius ?? 0} min={0} onCommit={(n) => patchLayout({ cornerRadius: n })} />
+          <NumberField value={l.cornerRadius ?? 0} min={0} onCommit={(n, o) => patchLayout({ cornerRadius: n }, o)} />
           <span style={{ flex: 1 }} />
         </div>
 
@@ -177,7 +181,7 @@ export default function EditorInspector({
             <NumberField
               value={(item as TextItem).style.fontSize}
               min={4}
-              onCommit={(n) => onChange(updateItem<TextItem>(doc, item.id, { style: { ...(item as TextItem).style, fontSize: Math.max(4, n) } }))}
+              onCommit={(n, o) => onChange(updateItem<TextItem>(doc, item.id, { style: { ...(item as TextItem).style, fontSize: Math.max(4, n) } }), o)}
             />
             <span style={{ flex: 1 }} />
           </div>
@@ -226,12 +230,12 @@ export default function EditorInspector({
             <span style={label}>Fade in / out</span>
             <NumberField
               value={(item as VideoItem).fadeInFrames ?? 0}
-              onCommit={(n) => onChange(updateItem<AudioItem>(doc, item.id, { fadeInFrames: Math.max(0, Math.round(n)) }))}
+              onCommit={(n, o) => onChange(updateItem<AudioItem>(doc, item.id, { fadeInFrames: Math.max(0, Math.round(n)) }), o)}
             />
             <span style={{ ...label, width: 44 }}>Fade out</span>
             <NumberField
               value={(item as VideoItem).fadeOutFrames ?? 0}
-              onCommit={(n) => onChange(updateItem<AudioItem>(doc, item.id, { fadeOutFrames: Math.max(0, Math.round(n)) }))}
+              onCommit={(n, o) => onChange(updateItem<AudioItem>(doc, item.id, { fadeOutFrames: Math.max(0, Math.round(n)) }), o)}
             />
           </div>
           <div style={row}>
@@ -239,7 +243,7 @@ export default function EditorInspector({
             <NumberField
               step={0.05}
               value={(item as VideoItem).playbackRate ?? 1}
-              onCommit={(n) => onChange(updateItem<AudioItem>(doc, item.id, { playbackRate: Math.max(0.25, Math.min(5, n)) }))}
+              onCommit={(n, o) => onChange(updateItem<AudioItem>(doc, item.id, { playbackRate: Math.max(0.25, Math.min(5, n)) }), o)}
             />
           </div>
           <div style={{ fontSize: 9, color: "var(--text-3)", marginBottom: 8 }}>
@@ -257,7 +261,7 @@ export default function EditorInspector({
             <span style={label}>Font size</span>
             <NumberField
               value={(item as CaptionsItem).style.fontSize}
-              onCommit={(n) => onChange(updateItem<CaptionsItem>(doc, item.id, { style: { ...(item as CaptionsItem).style, fontSize: Math.max(4, n) } }))}
+              onCommit={(n, o) => onChange(updateItem<CaptionsItem>(doc, item.id, { style: { ...(item as CaptionsItem).style, fontSize: Math.max(4, n) } }), o)}
             />
           </div>
           <div style={row}>
@@ -284,14 +288,14 @@ export default function EditorInspector({
             <NumberField
               step={100}
               value={(item as CaptionsItem).pageDurationMs ?? 1200}
-              onCommit={(n) => onChange(updateItem<CaptionsItem>(doc, item.id, { pageDurationMs: Math.max(200, n) }))}
+              onCommit={(n, o) => onChange(updateItem<CaptionsItem>(doc, item.id, { pageDurationMs: Math.max(200, n) }), o)}
             />
           </div>
           <div style={row}>
             <span style={label}>Words per page</span>
             <NumberField
               value={(item as CaptionsItem).maxWordsPerPage ?? 6}
-              onCommit={(n) => onChange(updateItem<CaptionsItem>(doc, item.id, { maxWordsPerPage: Math.max(1, Math.round(n)) }))}
+              onCommit={(n, o) => onChange(updateItem<CaptionsItem>(doc, item.id, { maxWordsPerPage: Math.max(1, Math.round(n)) }), o)}
             />
           </div>
         </>
@@ -335,9 +339,9 @@ export default function EditorInspector({
                 min={1}
                 suffix="f"
                 disabled={!spec}
-                onCommit={(n) => {
+                onCommit={(n, o) => {
                   if (!spec) return;
-                  onChange(updateItem(doc, item.id, { [edge]: { ...spec, durationInFrames: Math.max(1, Math.round(n)) } }));
+                  onChange(updateItem(doc, item.id, { [edge]: { ...spec, durationInFrames: Math.max(1, Math.round(n)) } }), o);
                 }}
               />
             </div>

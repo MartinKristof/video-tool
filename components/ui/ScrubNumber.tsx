@@ -12,7 +12,12 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 
 export interface ScrubNumberProps {
   value: number;
-  onChange: (next: number) => void;
+  /**
+   * `transient` marks the intermediate values produced while dragging. The
+   * consumer should apply them but not record them for undo, and treat the
+   * final call — without the flag — as the one edit that happened.
+   */
+  onChange: (next: number, opts?: { transient?: boolean }) => void;
   /** Units per pixel dragged. */
   step?: number;
   min?: number;
@@ -72,9 +77,19 @@ export default function ScrubNumber({
       if (!d) return;
       const dx = ev.clientX - d.startX;
       if (Math.abs(dx) > 2) movedRef.current = true;
-      onChange(round(scrubValue(d.startValue, dx, step, { shift: ev.shiftKey, alt: ev.altKey }, { min, max })));
+      onChange(
+        round(scrubValue(d.startValue, dx, step, { shift: ev.shiftKey, alt: ev.altKey }, { min, max })),
+        { transient: true },
+      );
     };
-    const up = () => {
+    const up = (ev: PointerEvent) => {
+      const d = dragRef.current;
+      // One committed value at the end of the drag, so it counts as a single
+      // edit rather than one per pixel travelled.
+      if (d && movedRef.current) {
+        const dx = ev.clientX - d.startX;
+        onChange(round(scrubValue(d.startValue, dx, step, { shift: ev.shiftKey, alt: ev.altKey }, { min, max })));
+      }
       dragRef.current = null;
       try { target.releasePointerCapture(e.pointerId); } catch { /* already gone */ }
       window.removeEventListener("pointermove", move);

@@ -588,10 +588,27 @@ export default function ProjectEditor() {
     setCode(next);
   }, [code, chatHistory, codeHistory]);
 
-  /** Apply a document change AND record it for undo. Mirrors commitComposition. */
-  const commitDoc = useCallback((next: EditorDoc) => {
+  /**
+   * Apply a document change AND record it for undo. Mirrors commitComposition.
+   *
+   * `transient` is for the values streaming out of a drag: they are applied so
+   * the preview follows the cursor, but not recorded. Without this one drag of a
+   * scrubbable number pushed a snapshot per pixel — 180 pixels of travel filled
+   * the entire 100-entry history with scrub steps and threw away everything
+   * before it, so Cmd+Z stepped back a pixel at a time. The state from before the
+   * drag is stashed on the first transient call and used as the undo point when
+   * the final value commits, so a whole drag is one edit.
+   */
+  const preDragDocRef = useRef<EditorDoc | null>(null);
+  const commitDoc = useCallback((next: EditorDoc, opts?: { transient?: boolean }) => {
     setDoc((prev) => {
-      if (prev) docHistory.pushSnapshot(prev);
+      if (opts?.transient) {
+        if (!preDragDocRef.current && prev) preDragDocRef.current = prev;
+        return next;
+      }
+      const undoPoint = preDragDocRef.current ?? prev;
+      preDragDocRef.current = null;
+      if (undoPoint) docHistory.pushSnapshot(undoPoint);
       docHistory.pushSnapshot(next);
       return next;
     });
