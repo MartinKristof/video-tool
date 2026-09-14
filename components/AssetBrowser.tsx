@@ -20,9 +20,20 @@ interface AssetBrowserProps {
   open: boolean;
   onClose: () => void;
   onCopyPath: (path: string) => void;
+  /**
+   * Render as a panel instead of a modal, for use as a tab. The body is
+   * identical either way — only the frame around it changes.
+   */
+  inline?: boolean;
+  /**
+   * When given, clicking a tile calls this instead of copying its
+   * `staticFile()` path. In the visual editor an asset should land on a track;
+   * copying a path to the clipboard is the code editor's idiom.
+   */
+  onInsert?: (path: string, type: string) => void;
 }
 
-export default function AssetBrowser({ open, onClose, onCopyPath }: AssetBrowserProps) {
+export default function AssetBrowser({ open, onClose, onCopyPath, inline, onInsert }: AssetBrowserProps) {
   const [groups, setGroups] = useState<AssetGroup[]>([]);
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const [uploading, setUploading] = useState<string | null>(null);
@@ -30,8 +41,9 @@ export default function AssetBrowser({ open, onClose, onCopyPath }: AssetBrowser
   const uploadFolderRef = useRef<string>("");
 
   useEffect(() => {
-    if (open) fetchAssets();
-  }, [open]);
+    // As a tab there is no `open` to wait for — it is mounted or it isn't.
+    if (open || inline) fetchAssets();
+  }, [open, inline]);
 
   function fetchAssets() {
     fetch("/api/assets")
@@ -77,9 +89,11 @@ export default function AssetBrowser({ open, onClose, onCopyPath }: AssetBrowser
     }
   }
 
-  return (
-    <Modal open={open} onClose={onClose} width={760} title="Asset library" stepLabel="Project files">
-      <div className="vt-scroll" style={{ overflowY: "auto", maxHeight: 560 }}>
+  // Built once and then framed, rather than wrapped in a component declared
+  // during render — that remounts the whole subtree on every render.
+  const body = (
+    <>
+      <div className="vt-scroll" style={{ overflowY: "auto", height: inline ? "100%" : undefined, maxHeight: inline ? undefined : 560 }}>
         {groups.map((group) => (
           <div key={group.folder} style={{ padding: "16px 20px", borderBottom: "0.5px solid var(--line-1)" }}>
             <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
@@ -105,7 +119,7 @@ export default function AssetBrowser({ open, onClose, onCopyPath }: AssetBrowser
                 {group.items.map((item) => (
                   <button
                     key={item.path}
-                    onClick={() => handleCopy(item.path)}
+                    onClick={() => (onInsert ? onInsert(item.path, item.type) : handleCopy(item.path))}
                     style={{
                       background: "transparent",
                       border: "none",
@@ -179,6 +193,14 @@ export default function AssetBrowser({ open, onClose, onCopyPath }: AssetBrowser
         style={{ display: "none" }}
         onChange={handleFileSelected}
       />
+    </>
+  );
+
+  return inline ? (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>{body}</div>
+  ) : (
+    <Modal open={open} onClose={onClose} width={760} title="Asset library" stepLabel="Project files">
+      {body}
     </Modal>
   );
 }

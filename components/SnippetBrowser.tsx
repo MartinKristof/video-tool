@@ -26,6 +26,8 @@ interface SnippetBrowserProps {
    * which only ever replaces the whole project.
    */
   onUseSnippet: (code: string, provenance?: { id: string; values: Record<string, unknown> }) => void;
+  /** Render as a panel instead of a modal, for use as a tab. */
+  inline?: boolean;
 }
 
 // Every preview accent is orange — the brand is orange-only. Icons still vary
@@ -54,6 +56,7 @@ export default function SnippetBrowser({
   onClose,
   hasExistingCode,
   onUseSnippet,
+  inline,
 }: SnippetBrowserProps) {
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -66,7 +69,8 @@ export default function SnippetBrowser({
   const [pendingCode, setPendingCode] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    // As a tab there is no `open` to wait for — it is mounted or it isn't.
+    if (!open && !inline) return;
     let cancelled = false;
     fetch("/api/snippets")
       .then((r) => r.json())
@@ -80,16 +84,17 @@ export default function SnippetBrowser({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, inline]);
 
-  // Reset the two-step flow whenever the modal closes.
+  // Reset the two-step flow whenever the modal closes. A tab never closes, so
+  // it keeps whatever step it was on.
   useEffect(() => {
-    if (!open) {
+    if (!open && !inline) {
       setSelectedId(null);
       setPendingCode(null);
       setConfirmId(null);
     }
-  }, [open]);
+  }, [open, inline]);
 
   const selectedSnippet = useMemo(
     () => (selectedId ? snippets.find((s) => s.id === selectedId) ?? null : null),
@@ -116,7 +121,7 @@ export default function SnippetBrowser({
       return;
     }
     onUseSnippet(code, provenance);
-    onClose();
+    if (inline) setSelectedId(null); else onClose();
   }
 
   function handleInsert(values: Record<string, unknown>) {
@@ -147,14 +152,10 @@ export default function SnippetBrowser({
 
   const inFormStep = !!selectedSnippet && !!selectedSchema;
 
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      width={760}
-      title={inFormStep ? selectedSnippet!.name : "Brand snippets"}
-      stepLabel={inFormStep ? "Customize parameters" : "Apify-branded scenes"}
-    >
+  // Built once and then framed, rather than wrapped in a component declared
+  // during render — that remounts the whole subtree on every render.
+  const body = (
+    <>
       {inFormStep ? (
         <SnippetParamsForm
           schema={selectedSchema!}
@@ -379,6 +380,20 @@ export default function SnippetBrowser({
           </div>
         </div>
       )}
+    </>
+  );
+
+  return inline ? (
+    <div className="vt-scroll" style={{ height: "100%", overflowY: "auto", minHeight: 0 }}>{body}</div>
+  ) : (
+    <Modal
+      open={open}
+      onClose={onClose}
+      width={760}
+      title={inFormStep ? selectedSnippet!.name : "Brand snippets"}
+      stepLabel={inFormStep ? "Customize parameters" : "Apify-branded scenes"}
+    >
+      {body}
     </Modal>
   );
 }

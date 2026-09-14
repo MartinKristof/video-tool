@@ -28,7 +28,7 @@ import TypeBadge from "@/components/ui/TypeBadge";
 import Segmented from "@/components/ui/Segmented";
 import { useCodeHistory } from "@/hooks/useCodeHistory";
 import { useDocHistory } from "@/hooks/useDocHistory";
-import { addItem, docDuration, docFromScene, findItem, fullFrameLayout, makeId, updateItem, type EditorDoc, type SceneItem } from "@/lib/editor-doc";
+import { addItem, docDuration, docFromScene, findItem, fullFrameLayout, makeId, trackWithRoomAt, updateItem, type EditorDoc, type SceneItem } from "@/lib/editor-doc";
 import { docFromVideoEdit, suspiciousSegments } from "@/lib/editor-import";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import type { PlayerRef } from "@remotion/player";
@@ -130,7 +130,7 @@ export default function ProjectEditor() {
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   // Which tab each panel is showing while the visual editor is open. Code-first
   // projects keep the old single-purpose panels.
-  const [bottomTab, setBottomTab] = useState<"footage" | "effects" | "code">("footage");
+  const [bottomTab, setBottomTab] = useState<"footage" | "assets" | "snippets" | "effects" | "code">("footage");
   const [rightTab, setRightTab] = useState<"chat" | "properties">("chat");
   const [editingSnippetId, setEditingSnippetId] = useState<string | null>(null);
   const chatRef = useRef<ChatPanelHandle>(null);
@@ -642,6 +642,40 @@ export default function ProjectEditor() {
     setSelectedItemIds(new Set([item.id]));
   }, [doc, currentFrame, commitComposition, commitDoc]);
 
+  /**
+   * Put a brand asset on a track. In the code editor an asset's only use is its
+   * `staticFile()` path on the clipboard; with a document open it can simply
+   * become a layer.
+   */
+  const insertAsset = useCallback((path: string, type: string) => {
+    if (!doc) return;
+    const isImage = type === "image" || type === "svg";
+    if (!isImage) {
+      window.alert(`${path.split("/").pop()} isn't an image — only images can be placed on a track.`);
+      return;
+    }
+    const frames = doc.size.fps * 3;
+    const { doc: host, trackId } = trackWithRoomAt(doc, currentFrame, frames);
+    const asset = { id: makeId("asset"), kind: "image" as const, src: path, name: path.split("/").pop() ?? path };
+    const size = Math.round(Math.min(doc.size.width, doc.size.height) * 0.4);
+    const item = {
+      type: "image" as const,
+      id: makeId("image"),
+      from: currentFrame,
+      durationInFrames: frames,
+      layout: {
+        x: Math.round((doc.size.width - size) / 2),
+        y: Math.round((doc.size.height - size) / 2),
+        width: size,
+        height: size,
+      },
+      assetId: asset.id,
+      fit: "contain" as const,
+    };
+    commitDoc(addItem({ ...host, assets: [...host.assets, asset] }, trackId, item));
+    setSelectedItemIds(new Set([item.id]));
+  }, [doc, currentFrame, commitDoc]);
+
   const handleChatUpdate = useCallback((messages: ChatMessage[]) => {
     setChatHistory(messages);
   }, []);
@@ -1027,6 +1061,9 @@ export default function ProjectEditor() {
                       selectedIds={selectedItemIds}
                       onSelectionChange={setSelectedItemIds}
                       onChange={commitDoc}
+                      isPlaying={isPlaying}
+                      onSeek={seekTo}
+                      onTogglePlay={togglePlay}
                     />
                   ) : isTerminalProject ? (
                     <TerminalPreview
@@ -1099,6 +1136,8 @@ export default function ProjectEditor() {
                           onChange={(v) => setBottomTab(v as typeof bottomTab)}
                           options={[
                             { value: "footage", label: "Footage" },
+                            { value: "assets", label: "Assets" },
+                            { value: "snippets", label: "Snippets" },
                             { value: "effects", label: "Effects" },
                             { value: "code", label: "Code" },
                           ]}
@@ -1112,6 +1151,24 @@ export default function ProjectEditor() {
                             onChange={commitDoc}
                             currentFrame={currentFrame}
                             onSelect={(id: string) => setSelectedItemIds(new Set([id]))}
+                          />
+                        )}
+                        {bottomTab === "assets" && (
+                          <AssetBrowser
+                            inline
+                            open={false}
+                            onClose={() => {}}
+                            onCopyPath={() => {}}
+                            onInsert={(path, type) => insertAsset(path, type)}
+                          />
+                        )}
+                        {bottomTab === "snippets" && (
+                          <SnippetBrowser
+                            inline
+                            open={false}
+                            onClose={() => {}}
+                            hasExistingCode={false}
+                            onUseSnippet={handleUseSnippet}
                           />
                         )}
                         {bottomTab === "effects" && (
