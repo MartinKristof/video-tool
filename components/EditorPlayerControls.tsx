@@ -40,12 +40,51 @@ export default function EditorPlayerControls({
   onSeek, onTogglePlay, loop, onLoopChange,
 }: Props) {
   const last = Math.max(0, durationInFrames - 1);
+  const progress = last > 0 ? (Math.min(currentFrame, last) / last) * 100 : 0;
   const step = (by: number) => onSeek?.(Math.max(0, Math.min(last, currentFrame + by)));
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", background: "var(--bg-2)", borderTop: "0.5px solid var(--line-1)" }}>
-      {/* Scrubber */}
+    <div style={{ display: "flex", flexDirection: "column", background: "var(--bg-2)", borderTop: "0.5px solid var(--line-1)", padding: "4px 0 0" }}>
+      {/*
+        A native range input needs its appearance reset before it can be this
+        thin. Left as `accentColor` on a 3px-tall control, the browser draws its
+        full-size thumb and crops it — which looked like a green blob cut in half
+        rather than a playhead. The track is drawn as a gradient so the played
+        portion is filled, and the input is given a taller transparent hit area
+        than the visible track so it stays easy to grab.
+      */}
+      <style>{`
+        .vt-scrub {
+          -webkit-appearance: none; appearance: none;
+          width: 100%; height: 14px; margin: 0; padding: 0;
+          background: transparent; outline: none; cursor: pointer; display: block;
+        }
+        .vt-scrub::-webkit-slider-runnable-track {
+          height: 3px; border-radius: 2px;
+        }
+        .vt-scrub::-moz-range-track {
+          height: 3px; border-radius: 2px; background: var(--line-2);
+        }
+        .vt-scrub::-moz-range-progress {
+          height: 3px; border-radius: 2px; background: var(--accent);
+        }
+        .vt-scrub::-webkit-slider-thumb {
+          -webkit-appearance: none; appearance: none;
+          width: 9px; height: 9px; border-radius: 50%;
+          background: var(--accent); border: none;
+          /* Centre the thumb on a 3px track. */
+          margin-top: -3px;
+        }
+        .vt-scrub::-moz-range-thumb {
+          width: 9px; height: 9px; border-radius: 50%;
+          background: var(--accent); border: none;
+        }
+        .vt-scrub:focus-visible::-webkit-slider-thumb {
+          box-shadow: 0 0 0 3px var(--accent-soft);
+        }
+      `}</style>
       <input
+        className="vt-scrub"
         type="range"
         min={0}
         max={last}
@@ -53,10 +92,17 @@ export default function EditorPlayerControls({
         value={Math.min(currentFrame, last)}
         onChange={(e) => onSeek?.(parseInt(e.target.value, 10))}
         aria-label="Playhead"
-        style={{ width: "100%", height: 3, margin: 0, accentColor: "var(--accent)", cursor: "pointer" }}
+        style={{
+          // WebKit has no ::-moz-range-progress equivalent, so the filled part
+          // is painted as a gradient stop at the current position.
+          background: `linear-gradient(to right, var(--accent) 0 ${progress}%, var(--line-2) ${progress}% 100%)`,
+          backgroundSize: "100% 3px",
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
+        }}
       />
 
-      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 8px 6px" }}>
         <span className="mono nums" style={{ fontSize: 10, color: "var(--accent)", minWidth: 86 }}>
           {timecode(currentFrame, fps)}
         </span>
