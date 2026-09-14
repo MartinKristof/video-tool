@@ -129,7 +129,7 @@ const VideoTrack: React.FC<{
     if (normalDur > 0) {
       elements.push(
         <Sequence key={`n-${c}`} from={c} durationInFrames={normalDur}>
-          <Video src={videoSrc} startFrom={v} endAt={v + normalDur} style={videoStyle} />
+          <Video src={videoSrc} trimBefore={v} trimAfter={v + normalDur} style={videoStyle} />
         </Sequence>,
       );
       v += normalDur;
@@ -148,7 +148,7 @@ const VideoTrack: React.FC<{
   if (remaining > 0) {
     elements.push(
       <Sequence key="n-end" from={c} durationInFrames={remaining}>
-        <Video src={videoSrc} startFrom={v} style={videoStyle} />
+        <Video src={videoSrc} trimBefore={v} style={videoStyle} />
       </Sequence>,
     );
   }

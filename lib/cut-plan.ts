@@ -206,7 +206,7 @@ export function generateRemotionCode(plan: CutPlan, opts: GenerateCodeOptions): 
     const duration = Math.max(1, endFrame - startFrame);
     seqs.push(
       `        <Series.Sequence durationInFrames={${duration}}>\n` +
-        `          <OffthreadVideo src={${JSON.stringify(opts.mediaSrc)}} startFrom={${startFrame}} endAt={${endFrame}} />\n` +
+        `          <OffthreadVideo src={${JSON.stringify(opts.mediaSrc)}} trimBefore={${startFrame}} trimAfter={${endFrame}} />\n` +
         `        </Series.Sequence>`
     );
   }

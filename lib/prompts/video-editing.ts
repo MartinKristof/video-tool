@@ -23,10 +23,6 @@ Between interview answers, put a short **full-screen branded title card** (NOT a
 This gives structure and hides the jump-cuts between passages of the same source.`;
 }
 
-// TODO(remotion 4.x): the composition patterns below teach `startFrom`/`endAt`,
-// which are deprecated in favour of `trimBefore`/`trimAfter`. They still work on
-// 4.0.431, so this is intentionally left as-is for now — migrate in a later pass.
-
 function fmtSeconds(s: number): string {
   return s.toFixed(1);
 }
@@ -76,7 +72,7 @@ function renderFile(projectId: string, f: EnrichedMediaFile): string {
       `↳ AUTO-REFRAMED version (subject-tracked, already cropped to fill THIS project's ` +
         `frame): use this src instead of the original for this clip → ` +
         `${JSON.stringify(`/api/media/${projectId}/${f.reframedPath}`)}. It has the SAME ` +
-        `duration, audio and timeline as the original, so keep the same startFrom/endAt and ` +
+        `duration, audio and timeline as the original, so keep the same trimBefore/trimAfter and ` +
         `transcript/scene timestamps — only swap the src. Drop it in full-frame ` +
         `(style width/height 100%, objectFit "cover"); do NOT add your own crop/scale.`
     );
@@ -89,7 +85,7 @@ function renderFile(projectId: string, f: EnrichedMediaFile): string {
         `duration ${fmtSeconds(p.durationSeconds)}s | native fps ${p.fps.toFixed(2)} | ` +
           `${p.width}×${p.height} | ${p.codec} | audio ${p.hasAudio ? "yes" : "no"}`
       );
-      lines.push(`SOURCE frame range: 0 .. ${maxSrcFrame}  (= duration × native fps; max endAt)`);
+      lines.push(`SOURCE frame range: 0 .. ${maxSrcFrame}  (= duration × native fps; max trimAfter)`);
     } else {
       // audio
       lines.push(`duration ${fmtSeconds(p.durationSeconds)}s | ${p.codec}`);
@@ -141,12 +137,15 @@ ${fileBlocks}
 
 The OUTPUT composition runs at compFps = ${compFps}.
 
-- \`startFrom\` / \`endAt\` trim the SOURCE clip and are in SOURCE frames at THAT FILE's NATIVE fps:
+- \`trimBefore\` / \`trimAfter\` trim the SOURCE clip and are in SOURCE frames at THAT FILE's NATIVE fps:
+  (Older projects spell these \`startFrom\` / \`endAt\`, which mean exactly the same thing and still work.
+  Write \`trimBefore\`/\`trimAfter\` in anything NEW, but do NOT go through existing code renaming them —
+  leave a file's existing spelling alone and change only what was actually asked for.)
   \`sourceFrame = round(seconds × nativeFps)\`
 - \`<Sequence from>\` / \`durationInFrames\` position a clip in the OUTPUT and are in COMPOSITION frames at compFps:
   \`compFrame = round(seconds × ${compFps})\`
 
-The native fps and compFps usually DIFFER. Never reuse a source frame as a composition frame or vice-versa. **Seconds are the source of truth** — convert from seconds each time. The "→source-frame" numbers next to scene cuts are precomputed for \`startFrom\`/\`endAt\` ONLY; compute \`<Sequence>\` positions yourself from \`seconds × ${compFps}\`.
+The native fps and compFps usually DIFFER. Never reuse a source frame as a composition frame or vice-versa. **Seconds are the source of truth** — convert from seconds each time. The "→source-frame" numbers next to scene cuts are precomputed for \`trimBefore\`/\`trimAfter\` ONLY; compute \`<Sequence>\` positions yourself from \`seconds × ${compFps}\`.
 
 ### Working from editorial notes / comments
 
@@ -156,16 +155,16 @@ The user may provide editorial notes about this footage — pasted into the chat
 - **Comments**: lines beginning \`↳ [comment]\` are Notion comments anchored to the text just above them — they carry instructions like "this is the short", "cut this", or on-screen text to add ("On screen question: What do you think about Apify?"). Follow them.
 - Resolve every note against the transcript timestamps and scene cuts above: if it names a quote or topic, find it in the transcript and use that segment's start/end; if it says "the second question" or "after the intro", use the scene cuts.
 - If a note is ambiguous or its moment isn't findable in the transcript, say so briefly instead of guessing at a timestamp.
-- For "pull the best moments" / "make short clips", make each clip a self-contained \`<Sequence>\` bounded by transcript segments and trimmed with \`startFrom\`/\`endAt\` on the source.
+- For "pull the best moments" / "make short clips", make each clip a self-contained \`<Sequence>\` bounded by transcript segments and trimmed with \`trimBefore\`/\`trimAfter\` on the source.
 
 ${topicStyleGuidance(topicCardStyle)}
 
 ### Never show black frames at cuts (this affects the RENDER, not just preview)
 
-A hard black frame appears at a cut when an \`<OffthreadVideo>\` is asked for a frame OUTSIDE its \`[startFrom, endAt]\` range — it has no footage there, so it renders solid black. The two ways this happens:
+A hard black frame appears at a cut when an \`<OffthreadVideo>\` is asked for a frame OUTSIDE its \`[trimBefore, trimAfter]\` range — it has no footage there, so it renders solid black. The two ways this happens:
 
-1. **TransitionSeries overlap not covered by footage.** \`<TransitionSeries.Sequence durationInFrames={dur + TRANSITION}>\` plays \`dur + TRANSITION\` frames, but if the inner \`<OffthreadVideo endAt={...}>\` only spans \`dur\` frames, the overlap frames read PAST \`endAt\` → **black at every cut**. FIX: whenever a Sequence is padded by the transition length, extend the clip's \`endAt\` (and for a leading transition, pull \`startFrom\` earlier) by the same number of frames so real footage covers the overlap. A Sequence must never outlive its clip's trim range.
-2. **Trim past the file.** Never set \`startFrom\`/\`endAt\` beyond the source file's real duration (you are given each file's duration + max source frame). Reading past the end freezes or blacks out.
+1. **TransitionSeries overlap not covered by footage.** \`<TransitionSeries.Sequence durationInFrames={dur + TRANSITION}>\` plays \`dur + TRANSITION\` frames, but if the inner \`<OffthreadVideo trimAfter={...}>\` only spans \`dur\` frames, the overlap frames read PAST \`trimAfter\` → **black at every cut**. FIX: whenever a Sequence is padded by the transition length, extend the clip's \`trimAfter\` (and for a leading transition, pull \`trimBefore\` earlier) by the same number of frames so real footage covers the overlap. A Sequence must never outlive its clip's trim range.
+2. **Trim past the file.** Never set \`trimBefore\`/\`trimAfter\` beyond the source file's real duration (you are given each file's duration + max source frame). Reading past the end freezes or blacks out.
 
 Prefer PLAIN back-to-back \`<Sequence from={running} durationInFrames={dur}>\` for hard cuts — they don't overlap, so they can't read past a trim and never black. Keep a solid opaque background \`<AbsoluteFill backgroundColor=…>\` at the root regardless. (The Player preview may still briefly flash while it re-seeks; the render is what matters, and the above keeps it clean.)
 
@@ -194,8 +193,8 @@ import { Video, OffthreadVideo, Audio, Img, Sequence, staticFile } from "remotio
 // With timing control
 <OffthreadVideo
   src="/api/media/${projectId}/interview.mov"
-  startFrom={90}      // start from frame 90 of the SOURCE video (native fps)
-  endAt={450}          // end at frame 450 of the SOURCE video (native fps)
+  trimBefore={90}      // start from frame 90 of the SOURCE video (native fps)
+  trimAfter={450}          // end at frame 450 of the SOURCE video (native fps)
   volume={0.8}
   style={{ width: "100%", height: "100%" }}
 />
@@ -211,14 +210,14 @@ import { Video, OffthreadVideo, Audio, Img, Sequence, staticFile } from "remotio
 
 **\`<OffthreadVideo>\`** (preferred for heavy files):
 - Renders on a separate thread — won't block the UI
-- Props: \`src\`, \`startFrom\`, \`endAt\`, \`volume\`, \`muted\`, \`playbackRate\`, \`style\`
-- \`startFrom\` / \`endAt\` are in frames of the SOURCE video (at its native fps)
+- Props: \`src\`, \`trimBefore\`, \`trimAfter\`, \`volume\`, \`muted\`, \`playbackRate\`, \`style\`
+- \`trimBefore\` / \`trimAfter\` are in frames of the SOURCE video (at its native fps)
 
 **\`<Video>\`** (simpler, for lighter clips):
 - Same API as \`<OffthreadVideo>\` but renders on main thread
 
 **\`<Audio>\`**:
-- Props: \`src\`, \`volume\`, \`startFrom\`, \`endAt\`, \`playbackRate\`
+- Props: \`src\`, \`volume\`, \`trimBefore\`, \`trimAfter\`, \`playbackRate\`
 
 **\`<Sequence>\`** (timeline positioning):
 - \`from\`: frame offset where this sequence starts in the composition
@@ -236,7 +235,7 @@ const EditedVideo: React.FC = () => {
         <OffthreadVideo src="/api/media/${projectId}/intro.mp4" />
       </Sequence>
       <Sequence from={150} durationInFrames={300}>
-        <OffthreadVideo src="/api/media/${projectId}/main.mp4" startFrom={60} />
+        <OffthreadVideo src="/api/media/${projectId}/main.mp4" trimBefore={60} />
       </Sequence>
       <Sequence from={450} durationInFrames={100}>
         <OffthreadVideo src="/api/media/${projectId}/outro.mp4" />
@@ -294,7 +293,7 @@ const EditedVideo: React.FC = () => {
 ### Rules for Video Editing Mode
 1. Always use \`OffthreadVideo\` over \`Video\` for video files (better performance with large files)
 2. Use \`Sequence\` for timeline positioning — \`from\` is the start frame in the OUTPUT composition (compFps)
-3. Use \`startFrom\`/\`endAt\` on the video component to trim the SOURCE clip (native fps) — see Frame math
+3. Use \`trimBefore\`/\`trimAfter\` on the video component to trim the SOURCE clip (native fps) — see Frame math
 4. Ground cut points in the provided scene cuts and transcript timestamps; do not invent them
 5. Set \`volume\` on video/audio when mixing multiple sources
 6. You can combine video editing with all the animation techniques (springs, interpolate, etc.) for overlays, titles, lower thirds

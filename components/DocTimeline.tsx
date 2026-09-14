@@ -2,6 +2,9 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Icon from "@/components/ui/Icon";
+import IconButton from "@/components/ui/IconButton";
+import Kbd from "@/components/ui/Kbd";
+import Modal from "@/components/ui/Modal";
 import { snapFrame } from "@/lib/editable-timeline";
 import type { AnimationPreset } from "@/lib/editor-effects";
 import {
@@ -93,6 +96,7 @@ export default function DocTimeline({
   const [clipboard, setClipboard] = useState<EditorItem | null>(null);
   /** Tool the pointer is over, so the rail can name it without a delay. */
   const [hoveredTool, setHoveredTool] = useState<string | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   /** Track lane the pointer is over mid-drag, so a clip can be dropped onto another. */
   const [hoverTrack, setHoverTrack] = useState<number | null>(null);
   const hoverRef = useRef<number | null>(null);
@@ -800,6 +804,7 @@ export default function DocTimeline({
         <div style={{ flex: 1 }} />
         <button onClick={() => setSnapOn((v) => !v)} style={{ ...toolBtn, color: snapOn ? "var(--accent)" : "var(--text-3)" }}>SNAP</button>
         <button onClick={() => setZoom(1)} style={toolBtn}>Fit</button>
+        <IconButton icon="info" size={22} title="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)} />
         <span className="mono nums" style={{ fontSize: 9, color: "var(--text-3)" }}>
           {Math.floor(currentFrame / fps / 60).toString().padStart(2, "0")}:
           {Math.floor((currentFrame / fps) % 60).toString().padStart(2, "0")}.
@@ -865,9 +870,84 @@ export default function DocTimeline({
         )}
         </div>
       </div>
+
+      {/*
+        The visual editor shipped without this and the legacy timeline has had it
+        all along, so the newer editor was the harder one to learn. Everything
+        listed is something this component (or the page) actually implements —
+        an aspirational shortcut sheet is worse than none.
+      */}
+      <Modal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Editor shortcuts" width={470}>
+        <div style={{ padding: "14px 20px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
+          {SHORTCUT_GROUPS.map((group) => (
+            <div key={group.title} style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+              <span className="mono cap" style={{ fontSize: 9, color: "var(--text-3)" }}>{group.title}</span>
+              {group.rows.map(([label, keys], i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                  <span style={{ fontSize: 12, color: "var(--text-1)" }}>{label}</span>
+                  <span style={{ display: "flex", gap: 4, alignItems: "center", flexShrink: 0 }}>
+                    {keys.map((k, j) =>
+                      k.startsWith("~")
+                        ? <span key={j} style={{ fontSize: 11, color: "var(--text-2)" }}>{k.slice(1)}</span>
+                        : <Kbd key={j}>{k}</Kbd>,
+                    )}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </Modal>
     </div>
   );
 }
+
+/**
+ * Grouped so the list can be scanned rather than read. A leading "~" marks prose
+ * (a mouse gesture) rather than a key to press.
+ */
+const SHORTCUT_GROUPS: { title: string; rows: [string, string[]][] }[] = [
+  {
+    title: "Playback",
+    rows: [
+      ["Play / pause", ["Space"]],
+      ["Move playhead 1 frame", ["←", "→"]],
+      ["Jump 10 frames", ["Shift", "~+", "←", "→"]],
+      ["Jump to start / end", ["Home", "End"]],
+      ["Scrub", ["~click / drag the ruler"]],
+    ],
+  },
+  {
+    title: "Editing",
+    rows: [
+      ["Split clip at playhead", ["S"]],
+      ["Delete clip + close gap", ["Delete"]],
+      ["Copy / paste at playhead", ["⌘C", "⌘V"]],
+      ["Duplicate", ["⌘D"]],
+      ["Trim / move", ["~drag a clip's edges or body"]],
+      ["Move to another track", ["~drag a clip up or down"]],
+      ["Undo / redo", ["⌘Z", "⌘⇧Z"]],
+    ],
+  },
+  {
+    title: "Selection & view",
+    rows: [
+      ["Select several clips", ["Shift", "~or", "⌘", "~+ click"]],
+      ["Deselect", ["Esc"]],
+      ["Zoom", ["⌘", "~+ scroll"]],
+      ["Fit to window", ["~the Fit button, above"]],
+    ],
+  },
+  {
+    title: "Canvas & panels",
+    rows: [
+      ["Edit a text layer in place", ["~double-click it on the canvas"]],
+      ["Set an entrance / exit", ["~drag an effect onto a clip's left / right half"]],
+      ["Import footage", ["~drop files on a track, or ⌘I in Footage"]],
+      ["Save / export", ["⌘S", "⌘E"]],
+    ],
+  },
+];
 
 const toolBtn: React.CSSProperties = {
   background: "var(--bg-3)",

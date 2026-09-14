@@ -377,8 +377,11 @@ function collectClipEdits(doc: EditableDoc, clips: EditableClip[]): Edit[] {
       const durEdit = implicitDurationEdit(doc, c);
       if (durEdit) edits.push(durEdit);
     }
-    pushTrimEdit(edits, c, "startFrom", c.startFrom, c.startFromAttrRange);
-    pushTrimEdit(edits, c, "endAt", c.endAt, c.endAtAttrRange);
+    const names = trimNamesFor(
+      c.sourceRange ? doc.originalCode.slice(c.sourceRange.start, c.sourceRange.end) : "",
+    );
+    pushTrimEdit(edits, c, names.before, c.startFrom, c.startFromAttrRange);
+    pushTrimEdit(edits, c, names.after, c.endAt, c.endAtAttrRange);
   }
   return edits;
 }
@@ -415,10 +418,27 @@ function implicitDurationEdit(doc: EditableDoc, c: EditableClip): Edit | null {
   return { ...c.durationAttrRange, replacement: String(want) };
 }
 
+/**
+ * Which spelling of Remotion's source-trim props to WRITE into this block.
+ *
+ * `startFrom`/`endAt` are deprecated in favour of `trimBefore`/`trimAfter`, and
+ * the parser accepts either — but a tag must not end up with one of each, which
+ * is what happens if a clip already written with `startFrom` has a `trimAfter`
+ * spliced in beside it. So a block that already uses the old spelling keeps it,
+ * and only a clip with no trim at all gets the current names. Nothing is ever
+ * renamed in place: churning a file the user asked nothing about is a big diff
+ * for no benefit, and the deprecated props still work.
+ */
+function trimNamesFor(code: string): { before: string; after: string } {
+  return /\b(?:startFrom|endAt)\s*=/.test(code)
+    ? { before: "startFrom", after: "endAt" }
+    : { before: "trimBefore", after: "trimAfter" };
+}
+
 function pushTrimEdit(
   edits: Edit[],
   clip: EditableClip,
-  attr: "startFrom" | "endAt",
+  attr: string,
   value: number | undefined,
   range: { start: number; end: number } | undefined,
 ) {
@@ -771,7 +791,7 @@ export function splitClip(
       tailEdits.push({ ...rel(splitBlock.startFromRange), replacement: String(tailStartFrom) });
     } else if (splitBlock.mediaAttrInsertAt != null) {
       const at = splitBlock.mediaAttrInsertAt - splitBlock.blockStart;
-      tailEdits.push({ start: at, end: at, replacement: `startFrom={${tailStartFrom}} ` });
+      tailEdits.push({ start: at, end: at, replacement: `${trimNamesFor(headText).before}={${tailStartFrom}} ` });
     }
     // The block we duplicated already carries the HEAD's narrowed endAt, so the
     // tail has to be given the original out-point back.
@@ -853,7 +873,7 @@ function splitTransitionChild(
       tailEdits.push({ ...rel(child.startFromRange), replacement: String(cutSourceFrame) });
     } else if (child.mediaAttrInsertAt != null) {
       const at = child.mediaAttrInsertAt - child.blockStart;
-      tailEdits.push({ start: at, end: at, replacement: `startFrom={${cutSourceFrame}} ` });
+      tailEdits.push({ start: at, end: at, replacement: `${trimNamesFor(region.blocks[idx]).before}={${cutSourceFrame}} ` });
     }
     if (clip.endAt != null && child.endAtRange) {
       tailEdits.push({ ...rel(child.endAtRange), replacement: String(clip.endAt) });

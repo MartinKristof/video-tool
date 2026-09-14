@@ -42,7 +42,7 @@ export default Composition;
 `;
 
 // ───────────────────────────────────────── 1a ─────────────────────────────────
-head("video clip with NO startFrom gets one spliced in on a left-trim");
+head("video clip with NO trim gets one spliced in on a left-trim");
 {
   const code = wrap(`    <Sequence from={0} durationInFrames={150}>
       <OffthreadVideo src={"/m/a.mp4"} />
@@ -54,13 +54,35 @@ head("video clip with NO startFrom gets one spliced in on a left-trim");
   a(!!doc, "editable");
   a(doc!.clips[0].startFrom === undefined, "no startFrom initially");
   const next = codeFromDoc(trimClipLeft(doc!, doc!.clips[0].id, 25));
-  a(/startFrom=\{25\}/.test(next), "startFrom={25} spliced into the media tag");
+  // New code gets Remotion's current spelling; startFrom/endAt are deprecated.
+  a(/trimBefore=\{25\}/.test(next), "trimBefore={25} spliced into the media tag");
+  a(!/startFrom=/.test(next), "and the deprecated name is not used for new code");
   a(!evalSceneCode(next)?.error, "still evaluates");
   const re = analyzeEditability(next, 30).doc!;
   a(re.clips[0].startFrom === 25, "re-parses with startFrom 25");
   a(re.clips[0].durationInFrames === 125, "clip shortened to 125");
   a(re.clips[1].from === 125, "following clip rippled left by 25");
   a(re.totalDurationInFrames === 275, `total 275 (got ${re.totalDurationInFrames})`);
+}
+
+// A clip already written with the deprecated spelling must KEEP it. Splicing the
+// modern name in beside an existing `startFrom` would leave one tag carrying one
+// of each — and re-spelling the whole file would be a huge diff for a one-clip
+// edit. 305 existing projects are written the old way.
+head("a clip already using startFrom keeps that spelling, and never mixes families");
+{
+  // The mixing case: an out-point written the old way, and no in-point yet — so
+  // the left-trim below has to SPLICE one next to an existing `endAt`.
+  const code = wrap(`    <Sequence from={0} durationInFrames={150}>
+      <OffthreadVideo src={"/m/a.mp4"} endAt={200} />
+    </Sequence>`);
+  const { doc } = analyzeEditability(code, 30);
+  a(!!doc, "editable");
+  a(doc!.clips[0].endAt === 200, "the deprecated spelling still parses");
+  const next = codeFromDoc(trimClipLeft(doc!, doc!.clips[0].id, 25));
+  a(/startFrom=\{25\}/.test(next), "the spliced in-point matches the family already on the tag");
+  a(!/trimBefore=|trimAfter=/.test(next), "so no tag ends up with one name from each family");
+  a(/endAt=\{200\}/.test(next), "and the existing attribute is left alone");
 }
 
 head("two <Video> tags in ONE Sequence keep their own trims");
