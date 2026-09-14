@@ -131,3 +131,16 @@ export function wordProgress(index: number, count: number, progress: number): nu
 export function presetsFor(itemType: string): PresetInfo[] {
   return ANIMATION_PRESETS.filter((p) => !p.textOnly || itemType === "text" || itemType === "captions");
 }
+
+/**
+ * A usable frame count for an animation, whatever the document holds.
+ *
+ * `Math.max(1, x)` is NOT a sufficient guard: `Math.max(1, undefined)` is NaN,
+ * and Remotion throws on a NaN spring duration — which takes down the whole
+ * preview, not just the animation. Anything missing, zero, negative or not a
+ * number falls back instead.
+ */
+export function animationFrames(spec: AnimationSpec | undefined, fallback = 12): number {
+  const n = spec?.durationInFrames;
+  return typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.round(n) : fallback;
+}

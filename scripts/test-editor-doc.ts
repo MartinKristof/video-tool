@@ -11,7 +11,7 @@
 import fs from "fs";
 import path from "path";
 import { docFromVideoEdit, suspiciousSegments } from "../lib/editor-import";
-import { ANIMATION_PRESETS, presetStyle, presetsFor, visibleCharacters, wordProgress } from "../lib/editor-effects";
+import { ANIMATION_PRESETS, animationFrames, presetStyle, presetsFor, visibleCharacters, wordProgress } from "../lib/editor-effects";
 import { scrubValue } from "../components/ui/ScrubNumber";
 import { evalSceneCode } from "../remotion/DynamicScene";
 import {
@@ -458,6 +458,23 @@ head("text decomposition: typing and word cascade");
   const forVideo = presetsFor("video").map((p) => p.id);
   a(!forVideo.includes("type") && !forVideo.includes("words"), "typing is not offered for a video clip");
   a(presetsFor("text").map((p) => p.id).includes("type"), "typing IS offered for text");
+}
+
+head("animation length can never reach the renderer as NaN");
+{
+  // Math.max(1, undefined) is NaN, and Remotion throws on a NaN spring duration
+  // — which takes down the whole preview, not just the animation. Every shape a
+  // stored document could hold must come back usable.
+  const cases: [unknown, number][] = [
+    [undefined, 12], [null, 12], [NaN, 12], [0, 12], [-5, 12],
+    ["12" as unknown, 12], [12, 12], [1, 1], [7.6, 8], [500, 500],
+  ];
+  for (const [raw, expected] of cases) {
+    const got = animationFrames(raw === undefined ? undefined : { preset: "rise", durationInFrames: raw as number });
+    a(got === expected, `duration ${JSON.stringify(raw)} -> ${expected} (got ${got})`);
+    a(Number.isFinite(got) && got > 0, `duration ${JSON.stringify(raw)} is always finite and positive`);
+  }
+  a(animationFrames(undefined, 30) === 30, "the fallback is respected");
 }
 
 head("scrubbable number maths");

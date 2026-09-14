@@ -2,7 +2,7 @@ import React, { useMemo } from "react";
 import { AbsoluteFill, Audio, Img, OffthreadVideo, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import { evalSceneCode } from "./DynamicScene";
 import { SPRINGS } from "./motion";
-import { presetStyle, visibleCharacters, wordProgress } from "../lib/editor-effects";
+import { animationFrames, presetStyle, visibleCharacters, wordProgress } from "../lib/editor-effects";
 import {
   captionPageAt,
   docDuration,
@@ -292,13 +292,14 @@ function useAnimationProgress(item: EditorItem) {
         frame,
         fps,
         config: SPRINGS.SNAPPY,
-        durationInFrames: Math.max(1, inSpec.durationInFrames),
+        durationInFrames: animationFrames(inSpec),
       })
     : 1;
+  const outFrames = animationFrames(outSpec);
   const outProgress = outSpec && outSpec.preset !== "none"
     ? interpolate(
         frame,
-        [item.durationInFrames - outSpec.durationInFrames, item.durationInFrames],
+        [item.durationInFrames - outFrames, item.durationInFrames],
         [1, 0],
         { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
       )

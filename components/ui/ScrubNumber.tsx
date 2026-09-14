@@ -59,6 +59,11 @@ export default function ScrubNumber({
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     if (disabled || editing) return;
     e.preventDefault();
+    // Capture the pointer on this element: without it a fast drag that leaves
+    // the field can be swallowed by whatever it passes over, and the value stops
+    // following the cursor.
+    const target = e.currentTarget as HTMLElement;
+    try { target.setPointerCapture(e.pointerId); } catch { /* not fatal */ }
     dragRef.current = { startX: e.clientX, startValue: value };
     movedRef.current = false;
 
@@ -71,6 +76,7 @@ export default function ScrubNumber({
     };
     const up = () => {
       dragRef.current = null;
+      try { target.releasePointerCapture(e.pointerId); } catch { /* already gone */ }
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
@@ -135,6 +141,10 @@ const field: React.CSSProperties = {
   fontSize: 11,
   padding: "3px 6px",
   width: "100%",
-  minWidth: 0,
+  // Wide enough to actually grab. Sharing a flex row with a dropdown, a
+  // `width: 100%` field with no floor can be squeezed to a few pixels, which
+  // looks present but is impossible to drag.
+  minWidth: 46,
   boxSizing: "border-box",
+  textAlign: "right",
 };
