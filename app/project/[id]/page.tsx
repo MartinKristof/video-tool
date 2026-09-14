@@ -409,7 +409,7 @@ export default function ProjectEditor() {
       await fetch(`/api/projects/${projectId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, chatHistory, styleMode, ...(terminalAnnotations !== undefined ? { terminalAnnotations } : {}) }),
+        body: JSON.stringify({ code, chatHistory, styleMode, ...(terminalAnnotations !== undefined ? { terminalAnnotations } : {}), ...(doc ? { doc } : {}) }),
       });
       lastSavedRef.current = {
         code,
@@ -417,10 +417,14 @@ export default function ProjectEditor() {
         annotations: JSON.stringify(terminalAnnotations ?? null),
         styleMode,
       };
+      // Must be updated too: this cancelled the debounced save on its way in, and
+      // the effect only reschedules when something CHANGES. Leaving the ref stale
+      // meant Cmd+S after a timeline edit discarded it until the next edit.
+      lastSavedDocRef.current = doc ? JSON.stringify(doc) : "";
     } catch {
       // silent
     }
-  }, [project, projectId, code, chatHistory, terminalAnnotations, styleMode]);
+  }, [project, projectId, code, chatHistory, terminalAnnotations, styleMode, doc]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -431,7 +435,7 @@ export default function ProjectEditor() {
         forceSave();
       } else if (mod && e.key === "e") {
         e.preventDefault();
-        if (code.trim()) setExportOpen(true);
+        if (code.trim() || doc) setExportOpen(true);
       } else if (mod && e.key === "z" && !e.shiftKey) {
         // Only handle composition-level undo when focus is NOT inside Monaco
         const active = document.activeElement;
@@ -1029,7 +1033,9 @@ export default function ProjectEditor() {
             size="sm"
             icon="download"
             onClick={() => setExportOpen(true)}
-            disabled={!code.trim()}
+            // A document renders through sceneCodeFromDoc, so it exports with no
+            // code file at all — gating on `code` alone locked those projects in.
+            disabled={!code.trim() && !doc}
           >
             Export
           </Button>
@@ -1255,6 +1261,10 @@ export default function ProjectEditor() {
                 }
                 onGenerationComplete={handleGenerationComplete}
                 sceneError={sceneError}
+                doc={docView}
+                selectedIds={[...selectedItemIds]}
+                playheadFrame={currentFrame}
+                onDocChanged={commitDoc}
               />
               )}
             </div>

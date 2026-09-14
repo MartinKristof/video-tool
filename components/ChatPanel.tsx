@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from "react";
 import type { ChatMessage, SvgFile, Engine } from "@/lib/types";
+import type { EditorDoc } from "@/lib/editor-doc";
 import Icon from "@/components/ui/Icon";
 import Button from "@/components/ui/Button";
 import IconButton from "@/components/ui/IconButton";
@@ -80,6 +81,15 @@ interface ChatPanelProps {
   onTransitionStyleChange?: (mode: import("@/lib/types").TransitionStyle) => void;
   useSfx?: boolean;
   onUseSfxChange?: (v: boolean) => void;
+  /**
+   * With a document open the chat edits the TIMELINE instead of the code file:
+   * the same box, pointed at /api/edit-doc, where the model drives real editing
+   * tools rather than writing TSX. Without one, nothing below changes.
+   */
+  doc?: EditorDoc;
+  selectedIds?: string[];
+  playheadFrame?: number;
+  onDocChanged?: (doc: EditorDoc, opts?: { transient?: boolean }) => void;
 }
 
 const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function ChatPanel(
@@ -108,6 +118,10 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function ChatPanel
     onTransitionStyleChange,
     useSfx,
     onUseSfxChange,
+    doc,
+    selectedIds,
+    playheadFrame,
+    onDocChanged,
   },
   ref,
 ) {
@@ -244,6 +258,12 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function ChatPanel
     let fullResponse = "";
 
     try {
+      // The timeline is open: edit the document, not the code file.
+      if (doc && onDocChanged) {
+        await editDocument(messagesForAI, updatedHistory, controller);
+        return;
+      }
+
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -355,6 +375,86 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function ChatPanel
         setStreamingContent("");
       }
     }
+  }
+
+  /**
+   * Ask the AI to edit the open timeline.
+   *
+   * The server owns the document while the turn runs and streams it back, so a
+   * turn that fails part-way can never leave a half-applied edit here. Documents
+   * arriving mid-turn are applied but NOT recorded (`transient`), and the last
+   * one commits — that is what makes a ten-tool-call edit a single Cmd+Z, using
+   * the same mechanism a mouse drag already uses.
+   */
+  async function editDocument(
+    messagesForAI: ChatMessage[],
+    updatedHistory: ChatMessage[],
+    controller: AbortController,
+  ) {
+    let fullResponse = "";
+    let latestDoc: EditorDoc | null = null;
+    let edited = false;
+
+    const res = await fetch("/api/edit-doc", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        messages: messagesForAI,
+        doc,
+        projectId,
+        selectedIds: selectedIds ?? [],
+        playheadFrame: playheadFrame ?? 0,
+      }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    const reader = res.body?.getReader();
+    if (!reader) throw new Error("No response body");
+
+    const decoder = new TextDecoder();
+    // SSE events can be split across chunks — buffer until a full line arrives,
+    // or a document (which is large) gets dropped as unparseable JSON.
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const data = line.slice(6);
+        if (data === "[DONE]") continue;
+        let parsed: { text?: string; doc?: EditorDoc; transient?: boolean; error?: string; edited?: boolean };
+        try {
+          parsed = JSON.parse(data);
+        } catch {
+          continue;
+        }
+        if (parsed.error) throw new Error(parsed.error);
+        if (parsed.text) {
+          fullResponse += parsed.text;
+          setStreamingContent(fullResponse);
+        }
+        if (parsed.doc) {
+          latestDoc = parsed.doc;
+          onDocChanged?.(parsed.doc, { transient: parsed.transient === true });
+        }
+        if (parsed.edited) edited = true;
+      }
+    }
+
+    // Commit whatever the turn ended on, so the whole turn is one undo step even
+    // if the stream only ever sent transient updates.
+    if (latestDoc) onDocChanged?.(latestDoc);
+
+    const said = fullResponse.replace(/```[\s\S]*?```/g, "").trim();
+    const note = said
+      ? said
+      : edited
+        ? "Done — the timeline is updated."
+        : "⚠️ The model didn't change anything. Try saying more specifically what to edit.";
+    onChatUpdate([...updatedHistory, { role: "assistant", content: note }]);
   }
 
   function handleSend() {

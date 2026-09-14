@@ -14,6 +14,7 @@ import path from "path";
 import { bundle } from "@remotion/bundler";
 import { selectComposition, renderStill } from "@remotion/renderer";
 import { emptyDoc, addItem, addTrack, docDuration, type CaptionsItem, type EditorDoc, type SceneItem, type SolidItem, type TextItem } from "../lib/editor-doc";
+import { cutRange } from "../lib/editor-transcript";
 
 let pass = 0, fail = 0;
 const a = (c: boolean, m: string) => { if (c) pass++; else { fail++; console.log("  FAIL: " + m); } };
@@ -197,6 +198,56 @@ registerRoot(() => (
     const quick = await lengthShot(4, "quick");
     const slow = await lengthShot(40, "slow");
     a(!quick.equals(slow), "the entrance LENGTH changes what frame 6 looks like");
+
+    // A cut document must still become pixels. cutRange splits items at both
+    // edges and slides every track left, and the unit tests prove the numbers —
+    // but numbers that the renderer chokes on are worth nothing. Three colour
+    // bands, the middle one cut out: frame 5 must be the first colour and frame
+    // 35 must be the THIRD, because the second no longer exists anywhere.
+    const cutDoc = (() => {
+      let d = emptyDoc(SIZE);
+      const t = d.tracks[0].id;
+      d = addItem(d, t, { type: "solid", id: "one", from: 0, durationInFrames: 30, layout: { ...full }, color: "#ff0000" } as SolidItem);
+      d = addItem(d, t, { type: "solid", id: "two", from: 30, durationInFrames: 30, layout: { ...full }, color: "#00ff00" } as SolidItem);
+      d = addItem(d, t, { type: "solid", id: "three", from: 60, durationInFrames: 30, layout: { ...full }, color: "#0000ff" } as SolidItem);
+      // A title on a SECOND track, after the cut, so the render proves it moved.
+      d = addTrack(d, "Over");
+      d = addItem(d, d.tracks[1].id, {
+        type: "solid", id: "badge", from: 75, durationInFrames: 15,
+        layout: { x: 0, y: 0, width: 80, height: 80 }, color: "#ffffff",
+      } as SolidItem);
+      return cutRange(d, 30, 60, SIZE.fps, {});
+    })();
+    a(docDuration(cutDoc) === 60, `the cut document is 60 frames (got ${docDuration(cutDoc)})`);
+
+    const cutEntry = path.join(scenesDir, `_editordoc_cut_${Date.now().toString(36)}.tsx`);
+    fs.writeFileSync(cutEntry, `import React from "react";
+import { Composition, registerRoot } from "remotion";
+import { EditorComposition } from "../EditorComposition";
+const doc = ${JSON.stringify(cutDoc)} as never;
+registerRoot(() => (
+  <Composition id="Scene" component={EditorComposition as never} durationInFrames={60}
+    fps={${SIZE.fps}} width={${SIZE.width}} height={${SIZE.height}} defaultProps={{ doc }} />
+));
+`, "utf-8");
+    try {
+      const serveCut = await bundle({ entryPoint: cutEntry, publicDir: path.join(process.cwd(), "public") });
+      const compCut = await selectComposition({ serveUrl: serveCut, id: "Scene" });
+      a(compCut.durationInFrames === 60, "the cut document bundles and selects at its new length");
+      const cutShots: Record<string, Buffer> = {};
+      for (const [label, frame] of [["before", 5], ["after", 35], ["badge", 50]] as const) {
+        const out = path.join(tmp, `cut_${label}.png`);
+        await renderStill({ composition: compCut, serveUrl: serveCut, output: out, frame, imageFormat: "png" });
+        cutShots[label] = fs.readFileSync(out);
+        a(cutShots[label].length > 500, `cut frame ${frame} rendered`);
+      }
+      a(!cutShots.before.equals(cutShots.after), "frame 5 and frame 35 differ — the join renders");
+      // Frame 50 lands where the second-track badge now is (75 - 30 = 45..60),
+      // so it must differ from frame 35, which has no badge over it.
+      a(!cutShots.after.equals(cutShots.badge), "the other track's item moved with the cut and renders at its new frame");
+    } finally {
+      try { fs.unlinkSync(cutEntry); } catch {}
+    }
 
     // Windowed scene items: the mechanism that lets a generated edit be split
     // into blocks while its animated title cards keep rendering as authored.
