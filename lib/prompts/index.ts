@@ -8,10 +8,9 @@ import { getTransitionPrompt } from "./transitions";
 import { buildTerminalBase } from "./terminal-base";
 import { TERMINAL_EDIT_EXAMPLES } from "./terminal-examples";
 import { buildSfxPrompt } from "./sfx";
-import { buildHyperframesPrompt } from "./hyperframes-base";
 import type { SfxEntry } from "../sfx";
 import type { EnrichedMediaFile } from "../media-analysis";
-import type { AnimationType, Engine, ProjectSettings, StyleMode, TopicCardStyle, TransitionStyle } from "../types";
+import type { AnimationType, ProjectSettings, StyleMode, TopicCardStyle, TransitionStyle } from "../types";
 import { getProjectSize } from "../types";
 
 export function buildSystemPrompt(
@@ -23,19 +22,12 @@ export function buildSystemPrompt(
   customTheme?: boolean,
   useSfx?: boolean,
   sfx?: SfxEntry[],
-  engine?: Engine,
   transitionStyle?: TransitionStyle,
 ): string {
   const { width, height } = getProjectSize(settings);
 
   if (animationType === "terminal") {
     return [buildTerminalBase(width, height, customTheme), TERMINAL_EDIT_EXAMPLES].join("\n\n");
-  }
-
-  // HyperFrames engine: HTML/GSAP authoring contract reusing the same Apify
-  // colors/layout/style rules. (Terminal stays VHS regardless of engine.)
-  if (engine === "hyperframes") {
-    return buildHyperframesPrompt(width, height, settings.fps, styleMode);
   }
 
   const base = buildBasePrompt(width, height, settings.fps);
@@ -86,7 +78,6 @@ export function buildUserMessage(
   scriptWithTimestamps?: string,
   animationType?: AnimationType,
   currentTapeDurationMs?: number,
-  engine?: Engine,
 ): string {
   const parts: string[] = [];
 
@@ -99,7 +90,7 @@ export function buildUserMessage(
   }
 
   if (code) {
-    const lang = animationType === "terminal" ? "tape" : engine === "hyperframes" ? "js" : "tsx";
+    const lang = animationType === "terminal" ? "tape" : "tsx";
     const label = animationType === "terminal" ? "Current .tape script" : "Current scene code";
     parts.push(`${label}:\n\`\`\`${lang}\n${code}\n\`\`\``);
   }

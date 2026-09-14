@@ -1,16 +1,13 @@
 import { enqueueRender } from "@/lib/render-queue";
 import type { RenderCodec } from "@/lib/render-queue";
-import { enqueueHyperframesRender } from "@/lib/hyperframes-queue";
-import type { HfFormat } from "@/lib/hyperframes-queue";
 import { getProject } from "@/lib/projects";
 import { resolveLutPath } from "@/lib/luts";
 import { sceneCodeFromDoc } from "@/lib/editor-render";
 import { docDuration } from "@/lib/editor-doc";
-import type { Engine } from "@/lib/types";
 
 export async function POST(request: Request) {
   const body = await request.json();
-  const { sceneId, codec, projectId, engine, format, lut } = body;
+  const { sceneId, codec, projectId, lut } = body;
   let { durationInFrames, fps, width, height } = body;
   let code: string = body.code;
 
@@ -36,17 +33,9 @@ export async function POST(request: Request) {
   // Next holds :3000), so any root-relative "/api/media/..." src would resolve
   // against that bundle server and 404. Rewrite media URLs to absolute against this
   // app's real origin so the renderer can fetch the uploaded footage. (No-op for
-  // scenes without media, e.g. hyperframes / pure animations.)
+  // scenes without media, e.g. pure animations.)
   const origin = new URL(request.url).origin;
   code = code.replace(/(["'`])\/api\/media\//g, `$1${origin}/api/media/`);
-
-  // HyperFrames engine: HTML/GSAP scene rendered by its own CLI. Output format
-  // is mp4 (opaque) by default, or webm/mov (transparent / alpha) on request.
-  if ((engine as Engine) === "hyperframes") {
-    const hfFormat: HfFormat = format === "webm" || format === "mov" ? format : "mp4";
-    const job = enqueueHyperframesRender(sceneId || "untitled", code, fps || 30, width || 1920, height || 1080, hfFormat);
-    return Response.json(job);
-  }
 
   const codecMap: Record<string, RenderCodec> = { h264: "h264", prores: "prores", "prores-xq": "prores-xq", uncompressed: "uncompressed", qtrle: "qtrle", "hevc-alpha": "hevc-alpha" };
   const validCodec: RenderCodec = codecMap[codec] || "h264";

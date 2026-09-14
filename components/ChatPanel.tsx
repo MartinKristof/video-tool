@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from "react";
-import type { ChatMessage, SvgFile, Engine } from "@/lib/types";
+import type { ChatMessage, SvgFile } from "@/lib/types";
 import type { EditorDoc } from "@/lib/editor-doc";
 import Icon from "@/components/ui/Icon";
 import Button from "@/components/ui/Button";
@@ -9,7 +9,7 @@ import IconButton from "@/components/ui/IconButton";
 import { normalizeTapeQuotes } from "@/lib/tape-parser";
 
 function extractCodeFromResponse(text: string, animationType?: string): string {
-  // Accept tsx/js/html fences — HyperFrames scenes come back as ```js (or ```html).
+  // Accept tsx/js/html fences — older responses used a variety of them.
   const fenceMatch = text.match(/```(?:tsx|typescript|jsx|js|javascript|html|tape|vhs)?\s*\n([\s\S]*?)```/);
   let extracted = "";
   if (fenceMatch) {
@@ -66,7 +66,6 @@ interface ChatPanelProps {
     fps: number;
   };
   animationType: string;
-  engine?: Engine;
   notionContent?: string;
   scriptWithTimestamps?: string;
   svgContents?: SvgFile[];
@@ -103,7 +102,6 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function ChatPanel
     setIsGenerating,
     projectSettings,
     animationType,
-    engine,
     notionContent,
     scriptWithTimestamps,
     svgContents,
@@ -281,7 +279,6 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function ChatPanel
           topicCardStyle,
           transitionStyle,
           useSfx,
-          engine,
         }),
       });
 

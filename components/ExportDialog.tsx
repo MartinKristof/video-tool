@@ -8,7 +8,6 @@ import IconButton from "@/components/ui/IconButton";
 import Input from "@/components/ui/Input";
 import Segmented from "@/components/ui/Segmented";
 import { formatBytes } from "@/lib/format";
-import type { Engine } from "@/lib/types";
 import type { EditorDoc } from "@/lib/editor-doc";
 
 interface RenderPreset {
@@ -51,7 +50,6 @@ interface ExportDialogProps {
   height: number;
   projectName: string;
   projectId?: string;
-  engine?: Engine;
   /**
    * Present for visual-editor projects. Sent with the render so the export uses
    * the document currently on screen rather than the copy on disk, which the
@@ -70,13 +68,9 @@ export default function ExportDialog({
   height,
   projectName,
   projectId,
-  engine,
   doc,
 }: ExportDialogProps) {
-  // HyperFrames uses its own format selector (MP4 opaque / WebM · MOV transparent)
-  // instead of the Remotion codec list.
-  const isHyperframes = engine === "hyperframes";
-  const visiblePresets = isHyperframes ? BUILT_IN_PRESETS.filter((p) => p.codec === "h264") : BUILT_IN_PRESETS;
+  const visiblePresets = BUILT_IN_PRESETS;
   const [status, setStatus] = useState<"idle" | "queued" | "rendering" | "done" | "error">("idle");
   // While rendering, closing is guarded (the render runs server-side and never
   // stops) — this drives the "close anyway?" confirmation.
@@ -86,15 +80,14 @@ export default function ExportDialog({
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState(projectName.replace(/\s+/g, "-").toLowerCase());
   const [codec, setCodec] = useState<string>("h264");
-  const [hfFormat, setHfFormat] = useState<"mp4" | "webm" | "mov">("mp4");
   // Color-grade LUT — applied at export on the h264 path only (see render-queue).
   const [luts, setLuts] = useState<{ id: string; name: string; builtIn: boolean }[]>([]);
   const [lutId, setLutId] = useState<string>("none");
   const [uploadingLut, setUploadingLut] = useState(false);
   const lutInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Delivered file extension — HyperFrames by format, Remotion by codec.
-  const ext = isHyperframes ? hfFormat : codec === "h264" ? "mp4" : "mov";
+  // Delivered file extension, by codec.
+  const ext = codec === "h264" ? "mp4" : "mov";
 
   const [presetOpen, setPresetOpen] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -254,7 +247,7 @@ export default function ExportDialog({
       const res = await fetch("/api/render", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, durationInFrames, fps, width, height, codec: isHyperframes ? "h264" : codec, projectId, engine, format: hfFormat, lut: !isHyperframes && codec === "h264" ? lutId : undefined, ...(doc ? { doc } : {}) }),
+        body: JSON.stringify({ code, durationInFrames, fps, width, height, codec, projectId, lut: codec === "h264" ? lutId : undefined, ...(doc ? { doc } : {}) }),
       });
 
       if (!res.ok) throw new Error("Failed to enqueue render");
@@ -323,10 +316,8 @@ export default function ExportDialog({
     { label: "Duration", value: `${seconds}s` },
     { label: "FPS", value: String(fps) },
     {
-      label: isHyperframes ? "Format" : "Codec",
-      value: isHyperframes
-        ? (hfFormat === "mp4" ? "MP4 (opaque)" : hfFormat === "webm" ? "WebM (transparent)" : "MOV (transparent)")
-        : codec === "h264" ? "Classic" : codec === "prores" ? "Transparent Background" : codec === "prores-xq" ? "Color Grading" : codec === "hevc-alpha" ? "CapCut" : "OBS",
+      label: "Codec",
+      value: codec === "h264" ? "Classic" : codec === "prores" ? "Transparent Background" : codec === "prores-xq" ? "Color Grading" : codec === "hevc-alpha" ? "CapCut" : "OBS",
     },
   ];
 
@@ -473,42 +464,6 @@ export default function ExportDialog({
           ))}
         </div>
 
-        {/* Format — HyperFrames (MP4 opaque / WebM · MOV transparent) */}
-        {isHyperframes && (
-          <div>
-            <div className="mono cap" style={{ color: "var(--text-1)", marginBottom: 8 }}>
-              Format
-            </div>
-            <Segmented
-              value={hfFormat}
-              onChange={(v) => setHfFormat(v as "mp4" | "webm" | "mov")}
-              options={[
-                { value: "mp4", label: "MP4" },
-                { value: "webm", label: "WebM" },
-                { value: "mov", label: "MOV" },
-              ]}
-            />
-            <div
-              style={{
-                marginTop: 6, padding: 8, fontSize: 11, color: "var(--text-2)",
-                background: hfFormat === "mp4" ? "var(--bg-inset)" : "var(--accent-soft)",
-                borderRadius: 4,
-                border: hfFormat === "mp4" ? "0.5px solid var(--line-2)" : "0.5px solid var(--accent-line)",
-                display: "flex", alignItems: "center", gap: 6,
-              }}
-            >
-              <Icon name="info" size={12} style={{ color: hfFormat === "mp4" ? "var(--text-3)" : "var(--accent)" }} />
-              {hfFormat === "mp4"
-                ? "H.264 .mp4 — opaque. Best for YouTube, social, and most playback."
-                : hfFormat === "webm"
-                  ? "VP9 .webm — transparent background (alpha). Great for overlays, OBS, and the web."
-                  : "ProRes 4444 .mov — transparent background (alpha), 10-bit. Best for editing / compositing."}
-            </div>
-          </div>
-        )}
-
-        {/* Codec — Remotion only */}
-        {!isHyperframes && (
         <div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <div className="mono cap" style={{ color: "var(--text-1)" }}>
@@ -637,10 +592,9 @@ export default function ExportDialog({
             )}
           </div>
         </div>
-        )}
 
         {/* Look (LUT) — color grade, h264 export only */}
-        {!isHyperframes && codec === "h264" && (
+        {codec === "h264" && (
           <div>
             <div className="mono cap" style={{ color: "var(--text-1)", marginBottom: 8 }}>
               Look (LUT)

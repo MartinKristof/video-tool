@@ -15,7 +15,6 @@ import TerminalPreview from "@/components/TerminalPreview";
 import ConvertAspectRatioButton from "@/components/ConvertAspectRatioButton";
 import Timeline from "@/components/Timeline";
 import { evalSceneCode } from "@/remotion/DynamicScene";
-import { parseSceneMeta } from "@/lib/hyperframes/template";
 import type { Project, ChatMessage, TerminalAnnotations, StyleMode, TopicCardStyle, TransitionStyle } from "@/lib/types";
 import { getProjectSize } from "@/lib/types";
 import { buildTerminalExportPlan } from "@/lib/terminal-export";
@@ -58,14 +57,6 @@ const PreviewPanel = dynamic(() => import("@/components/PreviewPanel"), {
   ),
 });
 
-const HyperframesPreview = dynamic(() => import("@/components/HyperframesPreview"), {
-  ssr: false,
-  loading: () => (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-2)", fontSize: 13 }}>
-      Loading preview...
-    </div>
-  ),
-});
 
 const TimelineExtractor = dynamic(() => import("@/components/TimelineExtractor"), { ssr: false });
 
@@ -473,12 +464,6 @@ export default function ProjectEditor() {
 
   const { durationInFrames, fps: extractedFps, sceneError } = useMemo(() => {
     if (!code || !code.trim()) return { durationInFrames: 250, fps: project?.settings.fps ?? 25, sceneError: undefined };
-    // HyperFrames scenes are plain JS (not Remotion) — read duration/fps from
-    // the declared consts instead of evaluating the code as a Remotion scene.
-    if (project?.engine === "hyperframes") {
-      const m = parseSceneMeta(code);
-      return { durationInFrames: m.durationInFrames, fps: m.fps, sceneError: undefined };
-    }
     if (docView) {
       return { durationInFrames: docDuration(docView), fps: docView.size.fps, sceneError: undefined };
     }
@@ -488,11 +473,11 @@ export default function ProjectEditor() {
       fps: result?.fps ?? project?.settings.fps ?? 25,
       sceneError: result?.error,
     };
-  }, [code, docView, project?.settings.fps, project?.engine]);
+  }, [code, docView, project?.settings.fps]);
 
   // Poll the preview Player for the current frame so the timeline playhead
-  // tracks playback. No-ops when the Player isn't mounted (Terminal / HyperFrames
-  // / first-pass), so those paths are untouched.
+  // tracks playback. No-ops when the Player isn't mounted (Terminal / first
+  // pass), so those paths are untouched.
   useEffect(() => {
     let raf = 0;
     const tick = () => {
@@ -710,7 +695,7 @@ export default function ProjectEditor() {
     // is injected into the AI message by ChatPanel's sceneError prop (which keeps
     // the visible chat message clean); we defer to setTimeout(0) so that prop has
     // settled after the setCode → sceneError re-render. Bounded by autoRetryRef.
-    if (project?.engine !== "hyperframes" && project?.animationType !== "terminal") {
+    if (project?.animationType !== "terminal") {
       const err = evalSceneCode(finalCode)?.error;
       if (err) {
         if (autoRetryRef.current < 2) {
@@ -725,10 +710,9 @@ export default function ProjectEditor() {
         autoRetryRef.current = 0;
       }
     }
-  }, [projectId, codeHistory, terminalAnnotations, styleMode, project?.engine, project?.animationType]);
+  }, [projectId, codeHistory, terminalAnnotations, styleMode, project?.animationType]);
 
   const isTerminalProject = project?.animationType === "terminal";
-  const isHyperframes = project?.engine === "hyperframes";
   const layoutKind = project?.animationType === "video" ? "video" : project?.animationType === "terminal" ? "terminal" : "still";
   const storage =
     typeof window !== "undefined"
@@ -771,15 +755,14 @@ export default function ProjectEditor() {
   // animation / broll / svg compositions are made of <Sequence> blocks and
   // can be reordered, trimmed, and split via the editable timeline.
   // The editable timeline parses Remotion <Sequence> blocks — it doesn't apply
-  // to HyperFrames scenes (plain HTML/GSAP, no Sequence model).
+  // to scenes with no Sequence model.
   // The visual editor always has a timeline; otherwise it depends on the type.
   const hasTimeline =
     Boolean(docView) ||
-    (!isHyperframes &&
     (project.animationType === "video" ||
       project.animationType === "animation" ||
       project.animationType === "broll" ||
-      project.animationType === "svg"));
+      project.animationType === "svg");
   // Only run the (browser-side) runtime extractor when the static parsers likely
   // can't see the clips: runtime-computed layouts (TransitionSeries, .map, Series).
   //
@@ -961,7 +944,7 @@ export default function ProjectEditor() {
             {showCodeEditor ? "Editor" : "Code view"}
           </Button>
         )}
-        {!doc && !isTerminalProject && !isHyperframes && (
+        {!doc && !isTerminalProject && (
           <Button
             variant="outline"
             size="sm"
@@ -1081,8 +1064,6 @@ export default function ProjectEditor() {
                       customTheme={customTheme}
                       onCustomThemeChange={handleCustomThemeChange}
                     />
-                  ) : isHyperframes ? (
-                    <HyperframesPreview code={code} width={width} height={height} />
                   ) : firstPass ? (
                     <FirstPassProgress state={firstPass} onDismiss={() => setFirstPass(null)} />
                   ) : (
@@ -1195,7 +1176,7 @@ export default function ProjectEditor() {
                     code={code}
                     onChange={handleCodeChange}
                     language={isTerminalProject ? "vhs" : "typescript"}
-                    filename={isTerminalProject ? "tape.tape" : isHyperframes ? "scene.js" : "Scene.tsx"}
+                    filename={isTerminalProject ? "tape.tape" : "Scene.tsx"}
                   />
                   )}
                 </div>
@@ -1236,7 +1217,6 @@ export default function ProjectEditor() {
                 setIsGenerating={setIsGenerating}
                 projectSettings={project.settings}
                 animationType={project.animationType}
-                engine={project.engine}
                 notionContent={project.notionContent}
                 scriptWithTimestamps={project.scriptWithTimestamps}
                 svgContents={project.svgContents}
@@ -1361,7 +1341,6 @@ export default function ProjectEditor() {
             height={exportHeight}
             projectName={project.name}
             projectId={projectId}
-            engine={project.engine}
             doc={doc}
           />
         );

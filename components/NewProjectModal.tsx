@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { STYLE_MODES } from "@/lib/prompts/styles";
 import { TRANSITION_MODES } from "@/lib/prompts/transitions";
 import type { AnimationType, Engine, Resolution, Orientation, FPS, SvgFile, StyleMode, TopicCardStyle, TransitionStyle, Collection } from "@/lib/types";
-import { getAnimationTypeMeta } from "@/lib/animation-types";
+import { getAnimationTypeMeta, normalizeAnimationType } from "@/lib/animation-types";
 import Modal from "@/components/ui/Modal";
 import Button from "@/components/ui/Button";
 import Icon from "@/components/ui/Icon";
@@ -159,17 +159,14 @@ export default function NewProjectModal({ open, onClose, initialType, onCreated 
   const [resolution, setResolution] = useState<Resolution>("4k");
   const [fps, setFps] = useState<FPS>(25);
   const [orientation, setOrientation] = useState<Orientation>("horizontal");
-  const [animationType, setAnimationType] = useState<AnimationType>(initialType ?? "broll");
-  // Rendering engine. Remotion (default) or HyperFrames (opt-in testing).
-  const [engine, setEngine] = useState<Engine>("remotion");
-  // HyperFrames: 24/25/30 fps (25 is captured at 30 then conformed to 25 on
-  // export). Coerce away unsupported rates (e.g. 50) when this engine is chosen.
-  useEffect(() => {
-    if (engine === "hyperframes" && fps !== 24 && fps !== 25 && fps !== 30) setFps(30);
-  }, [engine, fps]);
-  // HyperFrames is offered for standard animated scenes only (not terminal/video in v1).
-  const engineEligible = animationType !== "terminal" && animationType !== "video";
-  const effectiveEngine: Engine = engineEligible ? engine : "remotion";
+  // "broll" is still a valid stored value, but new projects are "animation" —
+  // the two generate from an identical prompt (see normalizeAnimationType).
+  const [animationType, setAnimationType] = useState<AnimationType>(
+    initialType ? normalizeAnimationType(initialType) : "animation",
+  );
+  // Remotion is the only engine; kept explicit because it is stored on the
+  // project and sent to the generate/render routes.
+  const engine: Engine = "remotion";
   const typeLocked = initialType !== undefined;
   const typeMeta = getAnimationTypeMeta(animationType);
 
@@ -327,7 +324,7 @@ export default function NewProjectModal({ open, onClose, initialType, onCreated 
     const projectBody = {
       name: name.trim(),
       animationType,
-      engine: effectiveEngine,
+      engine,
       settings: { resolution, orientation, fps },
       initialPrompt: isSmartTrim
         ? prompt.trim() || "Smart trim recording"
@@ -524,7 +521,7 @@ export default function NewProjectModal({ open, onClose, initialType, onCreated 
               <div>
                 <FieldLabel>Type</FieldLabel>
                 <div style={{ display: "flex", gap: 8 }}>
-                  {(["broll", "animation", "svg", "video"] as AnimationType[]).map((t) => (
+                  {(["animation", "svg", "video"] as AnimationType[]).map((t) => (
                     <TypeTile
                       key={t}
                       type={t}
@@ -553,42 +550,15 @@ export default function NewProjectModal({ open, onClose, initialType, onCreated 
                 <Segmented
                   value={fps}
                   onChange={(v) => setFps(v as FPS)}
-                  options={
-                    effectiveEngine === "hyperframes"
-                      ? [
-                          { value: 24, label: "24" },
-                          { value: 25, label: "25" },
-                          { value: 30, label: "30" },
-                        ]
-                      : [
-                          { value: 24, label: "24" },
-                          { value: 25, label: "25" },
-                          { value: 30, label: "30" },
-                          { value: 50, label: "50" },
-                        ]
-                  }
+                  options={[
+                    { value: 24, label: "24" },
+                    { value: 25, label: "25" },
+                    { value: 30, label: "30" },
+                    { value: 50, label: "50" },
+                  ]}
                 />
               </div>
             </div>
-
-            {engineEligible && (
-              <div>
-                <FieldLabel>Engine</FieldLabel>
-                <Segmented
-                  value={engine}
-                  onChange={(v) => setEngine(v as Engine)}
-                  options={[
-                    { value: "remotion", label: "Remotion" },
-                    { value: "hyperframes", label: "HyperFrames" },
-                  ]}
-                />
-                {engine === "hyperframes" && (
-                  <div className="mono cap" style={{ color: "var(--text-3)", marginTop: 6, lineHeight: 1.4 }}>
-                    Experimental HTML/GSAP engine. Same Apify look + motion; exports MP4 (24/25/30 fps).
-                  </div>
-                )}
-              </div>
-            )}
 
             <div>
               <FieldLabel>Orientation</FieldLabel>
@@ -1288,7 +1258,7 @@ export default function NewProjectModal({ open, onClose, initialType, onCreated 
               </div>
             )}
 
-            {animationType === "broll" && (
+            {animationType === "animation" && (
               <>
                 <div>
                   <FieldLabel hint="Optional">Notion URL</FieldLabel>

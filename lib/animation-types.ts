@@ -12,18 +12,9 @@ export interface AnimationTypeMeta {
 
 export const ANIMATION_TYPES: AnimationTypeMeta[] = [
   {
-    id: "broll",
-    label: "B-Roll",
-    subtitle: "Dark, cinematic style",
-    icon: "film",
-    color: "var(--magenta)",
-    colorSoft: "var(--magenta-soft)",
-    badgeLabel: "B-ROLL",
-  },
-  {
     id: "animation",
     label: "Animation",
-    subtitle: "Generic motion graphics",
+    subtitle: "Motion graphics & b-roll",
     icon: "bolt",
     color: "var(--cyan)",
     colorSoft: "var(--cyan-soft)",
@@ -58,6 +49,25 @@ export const ANIMATION_TYPES: AnimationTypeMeta[] = [
   },
 ];
 
+/**
+ * Fold the legacy "broll" type into "animation".
+ *
+ * The two were never actually different: buildSystemPrompt has no branch for
+ * either, and BROLL_DARK_PROMPT is appended to BOTH — so "B-Roll · dark,
+ * cinematic" and "Animation · generic motion graphics" were two doors into one
+ * room, generating from a byte-identical 163,680-character prompt. The labels
+ * promised a choice the tool could not deliver.
+ *
+ * Only the DISPLAY is merged. `broll` is still a valid AnimationType and is
+ * still what 123 stored projects say, so nothing is migrated or rewritten —
+ * they just appear under Animation now. Normalise at every display and filter
+ * boundary; never write the result back to a project.
+ */
+export function normalizeAnimationType(type: AnimationType): AnimationType {
+  return type === "broll" ? "animation" : type;
+}
+
 export function getAnimationTypeMeta(type: AnimationType): AnimationTypeMeta {
-  return ANIMATION_TYPES.find((t) => t.id === type) ?? ANIMATION_TYPES[1];
+  const id = normalizeAnimationType(type);
+  return ANIMATION_TYPES.find((t) => t.id === id) ?? ANIMATION_TYPES[0];
 }

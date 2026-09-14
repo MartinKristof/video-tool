@@ -11,7 +11,7 @@ import Button from "@/components/ui/Button";
 import Icon from "@/components/ui/Icon";
 import Modal from "@/components/ui/Modal";
 import type { ProjectMeta, AnimationType, Collection } from "@/lib/types";
-import { ANIMATION_TYPES, getAnimationTypeMeta } from "@/lib/animation-types";
+import { ANIMATION_TYPES, getAnimationTypeMeta, normalizeAnimationType } from "@/lib/animation-types";
 import { version as APP_VERSION } from "../package.json";
 
 export default function Home() {
@@ -163,7 +163,8 @@ export default function Home() {
   const countsByType = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const p of projects) {
-      counts[p.animationType] = (counts[p.animationType] ?? 0) + 1;
+      const id = normalizeAnimationType(p.animationType);
+      counts[id] = (counts[id] ?? 0) + 1;
     }
     return counts;
   }, [projects]);
@@ -426,7 +427,9 @@ export default function Home() {
 
   // ───── Per-type screen: filtered projects + new-project tile ─────
   const meta = getAnimationTypeMeta(selectedType);
-  const filtered = projects.filter((p) => p.animationType === selectedType);
+  // Normalised so the merged Animation tile lists the 123 legacy "broll"
+  // projects alongside the rest — they are the same thing.
+  const filtered = projects.filter((p) => normalizeAnimationType(p.animationType) === selectedType);
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-1)" }}>

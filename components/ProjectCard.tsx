@@ -266,24 +266,6 @@ export default function ProjectCard({
       <div style={{ padding: "14px 14px 16px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
           <TypeBadge type={project.animationType} />
-          {project.engine === "hyperframes" && (
-            <span
-              className="mono"
-              title="HyperFrames engine"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                fontSize: 9,
-                padding: "1px 5px",
-                borderRadius: 4,
-                color: "var(--accent)",
-                border: "0.5px solid var(--accent-line, color-mix(in oklab, var(--accent) 40%, transparent))",
-                letterSpacing: 0.3,
-              }}
-            >
-              HF
-            </span>
-          )}
           {currentCollection && (
             <span
               className="mono"

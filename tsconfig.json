@@ -30,5 +30,13 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    // video-studio is a SEPARATE Next app with its own tsconfig and
+    // package.json. The root include globs swept it in, and the root path
+    // mapping then resolved its "@/..." imports to THIS app's lib/ — so it
+    // contributed 52 of ~102 bogus errors and made `tsc --noEmit` useless as
+    // a signal. Typecheck it from its own directory.
+    "video-studio"
+  ]
 }

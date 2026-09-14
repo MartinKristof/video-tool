@@ -12,7 +12,7 @@ import { isReframedFilename } from "@/lib/reframe";
 import { getProjectSize } from "@/lib/types";
 import { analyzeSvgs, manifestForPrompt, diffForPrompt } from "@/lib/svg-analyzer";
 import { parseTape } from "@/lib/tape-parser";
-import type { AnimationType, Engine, ProjectSettings, ChatMessage, SvgFile, StyleMode, TopicCardStyle, TransitionStyle } from "@/lib/types";
+import type { AnimationType, ProjectSettings, ChatMessage, SvgFile, StyleMode, TopicCardStyle, TransitionStyle } from "@/lib/types";
 
 const anthropic = new Anthropic();
 
@@ -163,7 +163,6 @@ export async function POST(request: Request) {
     topicCardStyle,
     transitionStyle,
     useSfx,
-    engine,
   } = body as {
     messages: ChatMessage[];
     projectSettings: ProjectSettings;
@@ -177,7 +176,6 @@ export async function POST(request: Request) {
     topicCardStyle?: TopicCardStyle;
     transitionStyle?: TransitionStyle;
     useSfx?: boolean;
-    engine?: Engine;
   };
 
   if (!messages || !messages.length) {
@@ -233,7 +231,7 @@ export async function POST(request: Request) {
 
   // SFX are only relevant for non-terminal compositions (terminal is VHS .tape).
   const sfx = animationType !== "terminal" ? listSfx() : [];
-  const systemPrompt = buildSystemPrompt(animationType, projectSettings, assetPaths, videoContext, styleMode, customTheme, useSfx, sfx, engine, transitionStyle);
+  const systemPrompt = buildSystemPrompt(animationType, projectSettings, assetPaths, videoContext, styleMode, customTheme, useSfx, sfx, transitionStyle);
 
   // Attach Apify style reference images on the FIRST user turn only — keeps
   // follow-up edits cheap (the visual grammar is also encoded in the system prompt).
@@ -249,7 +247,7 @@ export async function POST(request: Request) {
     const attachReferences = isFirstUser && referenceImages.length > 0;
 
     if (isLastUser) {
-      let userContent = buildUserMessage(msg.content, currentCode, effectiveNotionContent, scriptWithTimestamps, animationType, currentTapeDurationMs, engine);
+      let userContent = buildUserMessage(msg.content, currentCode, effectiveNotionContent, scriptWithTimestamps, animationType, currentTapeDurationMs);
       if (svgContents && svgContents.length > 0) {
         const { manifests, sequenceDiff } = analyzeSvgs(svgContents);
         const parts: string[] = [];
@@ -298,10 +296,10 @@ export async function POST(request: Request) {
   });
 
   // Enable the render→look→fix tool loop for standard Remotion scenes only:
-  // not terminal .tape, not the HTML/GSAP hyperframes engine, and not
-  // footage-overlay video projects (those can't be still-rendered from code
-  // alone in this path). When enabled, the model drives its own vision loop.
-  const toolsEnabled = !isTerminal && engine !== "hyperframes" && animationType !== "video";
+  // not terminal .tape, and not footage-overlay video projects (those can't be
+  // still-rendered from code alone in this path). When enabled, the model drives
+  // its own vision loop.
+  const toolsEnabled = !isTerminal && animationType !== "video";
   const { width: renderWidth, height: renderHeight } = getProjectSize(projectSettings);
 
   // Cache the big (~25K-token) system prompt so follow-up edits, error retries,
