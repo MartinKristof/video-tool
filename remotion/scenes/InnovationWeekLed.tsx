@@ -43,7 +43,7 @@ const FONT_CSS = `
 
 // ---- Beat timing (frames @ 30 fps) ------------------------------------------
 // Beat A    0–96   "Turn any website into data."
-// Beat B   96–198  "68,000+ ready-made tools for AI."
+// Beat B   96–198  "68,000+ ready to run tools for AI."
 // Beat C  198–300  Apify wordmark lockup + apify.com
 const SCROLL_1 = 96;
 const SCROLL_2 = 198;
@@ -123,7 +123,7 @@ const Chars: React.FC<{
   preset?: Preset;
   stagger?: number;
   seed: string;
-}> = ({ text, start, size, color = C.text, weight = 900, preset = "SNAPPY", stagger = 1.3, seed }) => {
+}> = ({ text, start, size, color = C.text, weight = 400, preset = "SNAPPY", stagger = 1.3, seed }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const drift = ambientDrift(frame, 1.5, 86, seed);
@@ -135,7 +135,7 @@ const Chars: React.FC<{
         fontWeight: weight,
         fontSize: size,
         lineHeight: 0.95,
-        letterSpacing: "-0.03em",
+        letterSpacing: "-0.02em",
         color,
         whiteSpace: "pre",
         transform: `translateY(${drift}px)`,
@@ -196,10 +196,10 @@ const CountUp: React.FC<{ to: number; start: number; dur: number; size: number; 
     <div
       style={{
         fontFamily: FONT,
-        fontWeight: 900,
+        fontWeight: 400,
         fontSize: size,
         lineHeight: 0.95,
-        letterSpacing: "-0.03em",
+        letterSpacing: "-0.02em",
         color: C.orange,
         whiteSpace: "nowrap",
         fontVariantNumeric: "tabular-nums",
@@ -245,7 +245,7 @@ const Lockup: React.FC<{ start: number }> = ({ start }) => {
       <div
         style={{
           fontFamily: FONT,
-          fontWeight: 500,
+          fontWeight: 400,
           fontSize: width * 0.072,
           color: C.muted,
           letterSpacing: "0.01em",
@@ -306,13 +306,12 @@ export default function InnovationWeekLed() {
           <Chars text="data." start={33} size={big} color={C.orange} preset="ELASTIC" stagger={1.1} seed="a4" />
         </div>
 
-        {/* Beat B — 68,000+ ready-made tools for AI. */}
+        {/* Beat B — 68,000+ ready to run tools for AI. */}
         <div style={slot(1, "flex-start")}>
           <CountUp to={68000} start={B0} dur={50} size={big} seed="b0" />
           <div style={{ height: mid * 0.34 }} />
-          <Chars text="ready-made" start={B0 + 8} size={mid} preset="SNAPPY" seed="b1" />
-          <Chars text="tools" start={B0 + 17} size={mid} preset="LIQUID" stagger={1.6} seed="b2" />
-          <Chars text="for AI." start={B0 + 25} size={mid} preset="SNAPPY" seed="b3" />
+          <Chars text="ready to run" start={B0 + 8} size={mid} preset="SNAPPY" seed="b1" />
+          <Chars text="tools for AI." start={B0 + 18} size={mid} preset="LIQUID" stagger={1.5} seed="b2" />
         </div>
 
         {/* Beat C — wordmark lockup, holds fully present to the last frame */}

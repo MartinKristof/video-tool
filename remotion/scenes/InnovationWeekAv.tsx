@@ -42,8 +42,8 @@ const FONT_CSS = `
 
 // ---- Beat timing (frames @ 30 fps) ------------------------------------------
 // Beat A    0–120  "Turn any website into data."
-// Beat B  120–240  Get web data · Generate leads · Monitor competitors · Power AI agents
-// Beat C  240–345  "68,000+ ready-made tools in Apify Store"
+// Beat B  120–240  the eight "Use Apify for" cases, two columns
+// Beat C  240–345  "68,000+ ready to run tools in Apify Store"
 // Beat D  345–450  Apify wordmark lockup + apify.com
 const SCROLL_1 = 108;
 const SCROLL_2 = 228;
@@ -52,6 +52,20 @@ const SCROLL_DUR = 58;
 // Beats sit 0.82 canvas heights apart, not a full height, so the roll never
 // leaves an empty frame between two beats.
 const STEP_RATIO = 0.82;
+
+// The eight use cases, in the two-column order they are presented in.
+const USE_CASES_LEFT = [
+  "Lead generation",
+  "Pricing intelligence",
+  "Product research",
+  "Social media monitoring",
+];
+const USE_CASES_RIGHT = [
+  "Competitive intelligence",
+  "Review sentiment",
+  "AI search monitoring",
+  "Influencer discovery",
+];
 
 // ---- Roll easing ------------------------------------------------------------
 // A velocity profile (smooth ramp to an early peak, exponential decay, then a
@@ -123,7 +137,7 @@ const Chars: React.FC<{
   preset?: Preset;
   stagger?: number;
   seed: string;
-}> = ({ text, start, size, color = C.text, weight = 900, preset = "SNAPPY", stagger = 1.3, seed }) => {
+}> = ({ text, start, size, color = C.text, weight = 400, preset = "SNAPPY", stagger = 1.3, seed }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const drift = ambientDrift(frame, 1.5, 86, seed);
@@ -135,7 +149,7 @@ const Chars: React.FC<{
         fontWeight: weight,
         fontSize: size,
         lineHeight: 0.95,
-        letterSpacing: "-0.03em",
+        letterSpacing: "-0.02em",
         color,
         whiteSpace: "pre",
         transform: `translateY(${drift}px)`,
@@ -206,10 +220,10 @@ const Bullet: React.FC<{ text: string; start: number; size: number; seed: string
       <div
         style={{
           fontFamily: FONT,
-          fontWeight: 500,
+          fontWeight: 400,
           fontSize: size,
           lineHeight: 1,
-          letterSpacing: "-0.02em",
+          letterSpacing: "0em",
           color: C.text,
           whiteSpace: "nowrap",
           opacity: opt,
@@ -249,10 +263,10 @@ const CountUp: React.FC<{ to: number; start: number; dur: number; size: number; 
     <div
       style={{
         fontFamily: FONT,
-        fontWeight: 900,
+        fontWeight: 400,
         fontSize: size,
         lineHeight: 0.92,
-        letterSpacing: "-0.04em",
+        letterSpacing: "-0.02em",
         color: C.orange,
         whiteSpace: "nowrap",
         fontVariantNumeric: "tabular-nums",
@@ -280,7 +294,7 @@ const Sub: React.FC<{ text: string; start: number; size: number; seed: string }>
     <div
       style={{
         fontFamily: FONT,
-        fontWeight: 500,
+        fontWeight: 400,
         fontSize: size,
         lineHeight: 1.05,
         letterSpacing: "-0.02em",
@@ -328,7 +342,7 @@ const Lockup: React.FC<{ start: number }> = ({ start }) => {
       <div
         style={{
           fontFamily: FONT,
-          fontWeight: 500,
+          fontWeight: 400,
           fontSize: height * 0.055,
           color: C.muted,
           letterSpacing: "0.01em",
@@ -379,7 +393,11 @@ export default function InnovationWeekAv() {
 
   const left = width * 0.08;
   const headline = Math.round(height * 0.15);
-  const bullet = Math.round(height * 0.095);
+  // Sized so the longest row ("Social media monitoring", 910px at this size)
+  // clears its column with room to spare — measured, not guessed.
+  const bullet = Math.round(height * 0.058);
+  const colGap = width * 0.05;
+  const colW = (width * 0.84 - colGap) / 2;
   const stat = Math.round(height * 0.3);
   const sub = Math.round(height * 0.068);
 
@@ -414,18 +432,28 @@ export default function InnovationWeekAv() {
           </div>
         </div>
 
-        {/* Beat B — four things people do with Apify */}
-        <div style={slot(1, "flex-start", bullet * 0.55)}>
-          <Bullet text="Get web data" start={B0} size={bullet} seed="u0" />
-          <Bullet text="Generate leads" start={B0 + 9} size={bullet} seed="u1" />
-          <Bullet text="Monitor competitors" start={B0 + 18} size={bullet} seed="u2" />
-          <Bullet text="Power AI agents" start={B0 + 27} size={bullet} seed="u3" />
+        {/* Beat B — what people use Apify for. The two columns build together,
+            the left leading by 4 frames, so the block fills evenly. */}
+        <div style={slot(1, "flex-start", bullet * 0.9)}>
+          <Sub text="Use Apify for" start={B0} size={Math.round(bullet * 0.93)} seed="uch" />
+          <div style={{ display: "flex", gap: colGap }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: bullet * 0.62, width: colW }}>
+              {USE_CASES_LEFT.map((t, i) => (
+                <Bullet key={t} text={t} start={B0 + 6 + i * 8} size={bullet} seed={`ul${i}`} />
+              ))}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: bullet * 0.62, width: colW }}>
+              {USE_CASES_RIGHT.map((t, i) => (
+                <Bullet key={t} text={t} start={B0 + 10 + i * 8} size={bullet} seed={`ur${i}`} />
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Beat C — the Store number */}
         <div style={slot(2, "flex-start", sub * 0.5)}>
           <CountUp to={68000} start={C0} dur={54} size={stat} seed="s0" />
-          <Sub text="ready-made tools in Apify Store" start={C0 + 10} size={sub} seed="s1" />
+          <Sub text="ready to run tools in Apify Store" start={C0 + 10} size={sub} seed="s1" />
         </div>
 
         {/* Beat D — wordmark lockup, holds fully present to the last frame */}
