@@ -24,7 +24,7 @@ const input: React.CSSProperties = {
 
 /** Thin wrapper so every field in this panel scrubs and types the same way. */
 function NumberField({
-  value, onCommit, step = 1, min, max, precision = 0, suffix,
+  value, onCommit, step = 1, min, max, precision = 0, suffix, disabled,
 }: {
   value: number;
   onCommit: (n: number) => void;
@@ -33,6 +33,7 @@ function NumberField({
   max?: number;
   precision?: number;
   suffix?: string;
+  disabled?: boolean;
 }) {
   return (
     <ScrubNumber
@@ -43,6 +44,7 @@ function NumberField({
       max={max}
       precision={precision}
       suffix={suffix}
+      disabled={disabled}
     />
   );
 }
@@ -325,10 +327,14 @@ export default function EditorInspector({
                   <option key={p.id} value={p.id}>{p.label}</option>
                 ))}
               </select>
+              {/* Dead until a preset is chosen — there is no animation to give a
+                  length to. It used to still show "12f" and silently ignore every
+                  drag, which reads as broken rather than as not-applicable. */}
               <NumberField
                 value={spec?.durationInFrames ?? 12}
                 min={1}
                 suffix="f"
+                disabled={!spec}
                 onCommit={(n) => {
                   if (!spec) return;
                   onChange(updateItem(doc, item.id, { [edge]: { ...spec, durationInFrames: Math.max(1, Math.round(n)) } }));
