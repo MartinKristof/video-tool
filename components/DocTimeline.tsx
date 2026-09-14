@@ -91,6 +91,8 @@ export default function DocTimeline({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [captionsBusy, setCaptionsBusy] = useState<string | null>(null);
   const [clipboard, setClipboard] = useState<EditorItem | null>(null);
+  /** Tool the pointer is over, so the rail can name it without a delay. */
+  const [hoveredTool, setHoveredTool] = useState<string | null>(null);
   /** Track lane the pointer is over mid-drag, so a clip can be dropped onto another. */
   const [hoverTrack, setHoverTrack] = useState<number | null>(null);
   const hoverRef = useRef<number | null>(null);
@@ -540,16 +542,24 @@ export default function DocTimeline({
         <button
           title={track.hidden ? "Show track" : "Hide track"}
           onClick={() => commit({ ...doc, tracks: doc.tracks.map((t) => (t.id === track.id ? { ...t, hidden: !t.hidden } : t)) })}
-          style={{ background: "none", border: "none", cursor: "pointer", padding: 1, opacity: track.hidden ? 0.4 : 1 }}
+          style={{ background: "none", border: "none", cursor: "pointer", padding: 1 }}
         >
-          <Icon name="layers" size={11} style={{ color: "var(--text-3)" }} />
+          <Icon
+            name={track.hidden ? "eyeOff" : "eye"}
+            size={12}
+            style={{ color: track.hidden ? "var(--text-3)" : "var(--text-1)" }}
+          />
         </button>
         <button
           title={track.muted ? "Unmute track" : "Mute track"}
           onClick={() => commit({ ...doc, tracks: doc.tracks.map((t) => (t.id === track.id ? { ...t, muted: !t.muted } : t)) })}
-          style={{ background: "none", border: "none", cursor: "pointer", padding: 1, opacity: track.muted ? 0.4 : 1 }}
+          style={{ background: "none", border: "none", cursor: "pointer", padding: 1 }}
         >
-          <Icon name="monitor" size={11} style={{ color: "var(--text-3)" }} />
+          <Icon
+            name={track.muted ? "speakerOff" : "speaker"}
+            size={12}
+            style={{ color: track.muted ? "var(--text-3)" : "var(--text-1)" }}
+          />
         </button>
         {doc.tracks.length > 1 && (
           <button
@@ -707,27 +717,81 @@ export default function DocTimeline({
     </div>
   );
 
+  const tools: { id: string; icon: string; label: string; onClick: () => void; disabled?: boolean }[] = [
+    { id: "media", icon: "folder", label: "Add media", onClick: () => setPickerOpen((v) => !v) },
+    { id: "text", icon: "type", label: "Add text", onClick: () => addLayer("text") },
+    { id: "solid", icon: "square", label: "Add solid", onClick: () => addLayer("solid") },
+    { id: "track", icon: "rows", label: "Add track", onClick: () => commit(addTrack(doc)) },
+    { id: "split", icon: "scissors", label: "Split at playhead", onClick: splitAtPlayhead, disabled: selectedIds.size !== 1 },
+    { id: "delete", icon: "trash", label: "Delete selected", onClick: () => deleteSelected(true), disabled: selectedIds.size === 0 },
+  ];
+
+  const rail = (
+    // Tools down the left, as in Premiere: icon only, named on hover. Keeping
+    // them out of the timeline's own header means the header can be about the
+    // timeline's state (snap, zoom, playhead) rather than a row of buttons.
+    <div
+      style={{
+        width: 34, flexShrink: 0, display: "flex", flexDirection: "column",
+        alignItems: "center", gap: 2, padding: "6px 0",
+        borderRight: "0.5px solid var(--line-1)", background: "var(--bg-2)",
+        position: "relative", zIndex: 6,
+      }}
+      onPointerLeave={() => setHoveredTool(null)}
+    >
+      {tools.map((t) => (
+        <div key={t.id} style={{ position: "relative" }}>
+          <button
+            onClick={t.onClick}
+            disabled={t.disabled}
+            aria-label={t.label}
+            onPointerEnter={() => setHoveredTool(t.id)}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 26, height: 26, borderRadius: 4, padding: 0,
+              background: hoveredTool === t.id && !t.disabled ? "var(--bg-4)" : "transparent",
+              border: "none", cursor: t.disabled ? "default" : "pointer",
+            }}
+          >
+            <Icon
+              name={t.icon}
+              size={14}
+              style={{ color: t.disabled ? "var(--text-3)" : "var(--text-1)" }}
+            />
+          </button>
+          {hoveredTool === t.id && (
+            <span
+              className="mono"
+              style={{
+                position: "absolute", left: 32, top: 5, whiteSpace: "nowrap",
+                fontSize: 10, color: "var(--text-0)", background: "var(--bg-4)",
+                border: "0.5px solid var(--line-2)", borderRadius: 3,
+                padding: "3px 7px", pointerEvents: "none", zIndex: 20,
+                boxShadow: "var(--sh-float)",
+              }}
+            >
+              {t.label}
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+
   return (
     // `user-select: none` matters here: the ruler's tick labels are ordinary
     // text, so dragging the playhead across them selected them — and since
     // globals.css paints ::selection with the accent colour, that read as the
     // timeline lighting up green rather than as a stray selection.
-    <div
-      ref={wrapRef}
-      style={{
-        display: "flex", flexDirection: "column", height: "100%",
-        background: "var(--bg-1)", minHeight: 0, userSelect: "none",
-      }}
-    >
-      {/* toolbar */}
+    <div style={{ display: "flex", height: "100%", minHeight: 0, background: "var(--bg-1)", userSelect: "none" }}>
+      {rail}
+      <div
+        ref={wrapRef}
+        style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}
+      >
+      {/* Status strip — the tools themselves live in the rail on the left. */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderBottom: "0.5px solid var(--line-1)" }}>
         <span className="mono cap" style={{ fontSize: 9, color: "var(--text-3)" }}>Editor</span>
-        <button onClick={() => setPickerOpen((v) => !v)} style={toolBtn}>+ Media</button>
-        <button onClick={() => addLayer("text")} style={toolBtn}>+ Text</button>
-        <button onClick={() => addLayer("solid")} style={toolBtn}>+ Solid</button>
-        <button onClick={() => commit(addTrack(doc))} style={toolBtn}>+ Track</button>
-        <button onClick={splitAtPlayhead} style={toolBtn} disabled={selectedIds.size !== 1}>Split</button>
-        <button onClick={() => deleteSelected(true)} style={toolBtn} disabled={selectedIds.size === 0}>Delete</button>
         {uploading && (
           <span className="mono" style={{ fontSize: 9, color: "var(--accent)" }}>
             uploading {uploading}…
@@ -799,6 +863,7 @@ export default function DocTimeline({
         {snapLine != null && (
           <div style={{ position: "absolute", left: LABEL_W + snapLine * pxPerFrame, top: 0, bottom: 0, width: 1, background: "var(--text-0)", opacity: 0.5, pointerEvents: "none", zIndex: 4 }} />
         )}
+        </div>
       </div>
     </div>
   );

@@ -46,6 +46,16 @@ const paths: Record<string, React.ReactNode> = {
   bolt: <path d="M9 2L3 9h4l-1 5 6-7H8z" fill="currentColor" stroke="none" />,
   checkerboard: <g><rect x="2" y="2" width="12" height="12" rx="1" /><rect x="2" y="2" width="6" height="6" fill="currentColor" stroke="none" /><rect x="8" y="8" width="6" height="6" fill="currentColor" stroke="none" /></g>,
   scissors: <g><circle cx="4" cy="4" r="2" /><circle cx="4" cy="12" r="2" /><path d="M5.8 5.4L14 12M5.8 10.6L14 4" /></g>,
+  // Track controls read as what they do: a speaker for sound, an eye for
+  // visibility, each with a slash through it when off.
+  speaker: <g><path d="M8 3L5 6H2.5v4H5l3 3V3z" /><path d="M10.5 6a3 3 0 0 1 0 4" /></g>,
+  speakerOff: <g><path d="M8 3L5 6H2.5v4H5l3 3V3z" /><path d="M11 6l3 4M14 6l-3 4" /></g>,
+  eye: <g><path d="M1.5 8S4 4 8 4s6.5 4 6.5 4S12 12 8 12 1.5 8 1.5 8z" /><circle cx="8" cy="8" r="1.8" /></g>,
+  eyeOff: <g><path d="M6 4.4A6.3 6.3 0 0 1 8 4c4 0 6.5 4 6.5 4a12 12 0 0 1-2 2.3M9.8 11.7A6.6 6.6 0 0 1 8 12c-4 0-6.5-4-6.5-4a12 12 0 0 1 2.8-2.9" /><path d="M2.5 2.5l11 11" /></g>,
+  // Tool-rail glyphs.
+  type: <g><path d="M3 4h10M8 4v9M6 13h4" /></g>,
+  square: <rect x="3.5" y="3.5" width="9" height="9" rx="1" fill="currentColor" stroke="none" />,
+  rows: <g><rect x="2" y="3" width="12" height="4" rx="1" /><rect x="2" y="9" width="12" height="4" rx="1" /></g>,
   zoomIn: <g><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5L14 14M7 5v4M5 7h4" /></g>,
   zoomOut: <g><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5L14 14M5 7h4" /></g>,
 };
