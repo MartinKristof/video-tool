@@ -5,6 +5,7 @@
 import React, { useEffect, useState } from "react";
 import Modal from "@/components/ui/Modal";
 import Icon from "@/components/ui/Icon";
+import type { CutPlan } from "@/lib/cut-plan";
 
 interface MediaFile {
   name: string;
@@ -27,24 +28,8 @@ interface Transcript {
   durationSeconds: number;
 }
 
-interface CutRange {
-  from: number;
-  to: number;
-}
-
-interface RemovedSpan {
-  reason: "silence" | "filler";
-  from: number;
-  to: number;
-  text?: string;
-}
-
-interface CutPlan {
-  ranges: CutRange[];
-  removed: RemovedSpan[];
-  originalDuration: number;
-  trimmedDuration: number;
-}
+// The real plan type, not a local copy of it — this now crosses a boundary into
+// docFromCutPlan, and the copy had already drifted (no `thresholds`).
 
 interface SmartTrimDialogProps {
   open: boolean;
@@ -53,7 +38,12 @@ interface SmartTrimDialogProps {
   fps: number;
   hasMediaFolder: boolean;
   hasExistingCode: boolean;
-  onApply: (code: string) => void;
+  /**
+   * The plan comes back alongside the code so the caller can land the cut on the
+   * TIMELINE (one clip per kept range) rather than as a generated <Series>. The
+   * code stays in the payload as the fallback for a plan with no ranges.
+   */
+  onApply: (result: { code?: string; plan: CutPlan; mediaSrc: string; name: string }) => void;
 }
 
 type Stage = "pick" | "transcribing" | "review" | "error";
@@ -203,12 +193,17 @@ export default function SmartTrimDialog({
       }),
     });
     const data = await res.json();
-    if (!data.ok || !data.code) {
+    if (!data.ok || !data.plan) {
       setError(data.error ?? "Code generation failed");
       setStage("error");
       return;
     }
-    onApply(data.code);
+    onApply({
+      code: data.code,
+      plan: data.plan,
+      mediaSrc: `/api/media/${projectId}/${selectedFile.path}`,
+      name: selectedFile.path,
+    });
     onClose();
   }
 

@@ -1,4 +1,5 @@
 import { parseDataTimeline, parseSegments } from "./data-timeline";
+import type { CutPlan } from "./cut-plan";
 import {
   emptyDoc, fullFrameLayout, makeId,
   type Asset, type DocSize, type EditorDoc, type EditorItem, type SceneItem, type VideoItem,
@@ -51,6 +52,53 @@ function footageBlock(
     assetId,
     sourceIn,
     sourceOut,
+  };
+}
+
+/**
+ * Turn a Smart-trim cut plan into an editable timeline.
+ *
+ * The mapping is direct because both sides already speak the same units: a
+ * `KeepRange` is seconds into the source, and a media item stores `sourceIn` /
+ * `sourceOut` in seconds too. Each kept range becomes one clip, laid end to end.
+ *
+ * This is strictly better than the code the same plan used to generate. There,
+ * the whole cut arrived as one `<Series>` of hard-coded trims — a finished
+ * artefact you could regenerate with different thresholds but not actually edit.
+ * Here every kept range is a clip you can drag, retrim, split or delete, and the
+ * gaps the planner removed are simply the frames between them.
+ */
+export function docFromCutPlan(
+  plan: CutPlan,
+  size: DocSize,
+  src: string,
+  opts: { name?: string; sourceDurationSec?: number } = {},
+): EditorDoc | null {
+  if (!plan?.ranges?.length) return null;
+
+  const asset: Asset = {
+    id: makeId("asset"),
+    kind: "video",
+    src,
+    name: opts.name ?? src.split("/").pop() ?? "footage",
+    durationSec: opts.sourceDurationSec ?? plan.originalDuration,
+  };
+
+  let cursor = 0;
+  const items: EditorItem[] = [];
+  for (const range of plan.ranges) {
+    // A range shorter than a frame would round to zero and be dropped by the
+    // no-overlap invariant; keep it at one frame rather than losing the cut.
+    const durationInFrames = Math.max(1, Math.round((range.to - range.from) * size.fps));
+    items.push(footageBlock(size, asset.id, cursor, durationInFrames, range.from, range.to));
+    cursor += durationInFrames;
+  }
+
+  const base = emptyDoc(size);
+  return {
+    ...base,
+    assets: [asset],
+    tracks: [{ id: makeId("track"), name: "Cut", items }],
   };
 }
 

@@ -29,7 +29,7 @@ import Segmented from "@/components/ui/Segmented";
 import { useCodeHistory } from "@/hooks/useCodeHistory";
 import { useDocHistory } from "@/hooks/useDocHistory";
 import { addItem, docDuration, docFromScene, emptyDoc, findItem, fullFrameLayout, makeId, trackWithRoomAt, updateItem, type EditorDoc, type SceneItem } from "@/lib/editor-doc";
-import { docFromVideoEdit, suspiciousSegments } from "@/lib/editor-import";
+import { docFromCutPlan, docFromVideoEdit, suspiciousSegments } from "@/lib/editor-import";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import type { PlayerRef } from "@remotion/player";
 import type { ResolvedClip } from "@/lib/timeline-extract";
@@ -265,7 +265,20 @@ export default function ProjectEditor() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ transcript, generate: { mediaSrc, fps: extractedFps } }),
     }).then((r) => r.json());
-    if (!cp.ok || !cp.code) throw new Error(cp.error || "Cut plan failed");
+    if (!cp.ok) throw new Error(cp.error || "Cut plan failed");
+
+    // Land the cut on the TIMELINE. The same plan used to become one <Series> of
+    // hard-coded trims — a finished artefact you could regenerate but not edit.
+    // As a document every kept range is a clip you can drag, retrim or delete.
+    const size = { width, height, fps: extractedFps };
+    const asDoc = docFromCutPlan(cp.plan, size, mediaSrc, { name: srcName });
+    if (asDoc) {
+      commitDoc(asDoc);
+      return;
+    }
+    // Nothing survived the plan (or it came back empty) — fall back to the code
+    // path rather than leaving the project with nothing at all.
+    if (!cp.code) throw new Error("Cut plan produced no ranges");
     commitComposition(cp.code);
   }
 
@@ -1331,7 +1344,13 @@ export default function ProjectEditor() {
         fps={extractedFps}
         hasMediaFolder={!!project.mediaFolder}
         hasExistingCode={!doc && code.trim().length > 0}
-        onApply={commitComposition}
+        onApply={({ code: trimmedCode, plan, mediaSrc, name }) => {
+          // Same choice as the first pass: land it on the timeline when there is
+          // a plan to lay out, fall back to the generated code when there isn't.
+          const asDoc = docFromCutPlan(plan, { width, height, fps: extractedFps }, mediaSrc, { name });
+          if (asDoc) commitDoc(asDoc);
+          else if (trimmedCode) commitComposition(trimmedCode);
+        }}
       />
 
       <AnalyzeDialog

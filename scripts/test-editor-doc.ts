@@ -10,7 +10,9 @@
  */
 import fs from "fs";
 import path from "path";
-import { docFromVideoEdit, suspiciousSegments } from "../lib/editor-import";
+import { docFromCutPlan, docFromVideoEdit, suspiciousSegments } from "../lib/editor-import";
+import { planCuts, DEFAULT_THRESHOLDS } from "../lib/cut-plan";
+import type { Transcript } from "../lib/transcribe";
 import { ANIMATION_PRESETS, animationFrames, presetStyle, presetsFor, visibleCharacters, wordProgress } from "../lib/editor-effects";
 import { scrubValue } from "../components/ui/ScrubNumber";
 import { timecode } from "../components/EditorPlayerControls";
@@ -550,6 +552,54 @@ head("splitting and trimming a SCENE moves its window, like a media trim");
   // And it can never go negative.
   const past = trimItem(doc, "sc", "left", -100, FPS);
   a(((past.tracks[0].items[0] as SceneItem).sourceOffsetFrames ?? 0) >= 0, "the window never goes negative");
+}
+
+head("a Smart-trim plan becomes an editable timeline");
+{
+  // Both sides already speak the same units — a KeepRange is seconds into the
+  // source, and a media item stores sourceIn/sourceOut in seconds — so each kept
+  // range is simply a clip. What used to arrive as one opaque <Series> of
+  // hard-coded trims is now one draggable clip per range.
+  const plan = {
+    ranges: [{ from: 0, to: 2 }, { from: 5, to: 8 }, { from: 10, to: 10.5 }],
+    removed: [], originalDuration: 12, trimmedDuration: 5.5,
+    thresholds: DEFAULT_THRESHOLDS,
+  };
+  const doc = docFromCutPlan(plan, SIZE, "/api/media/p/a.mp4", { name: "a.mp4" })!;
+  a(!!doc, "built a document");
+  a(isValidDoc(doc), "valid");
+  a(doc.tracks.length === 1 && doc.tracks[0].items.length === 3, "one clip per kept range");
+  a(doc.assets.length === 1 && doc.assets[0].src === "/api/media/p/a.mp4", "with the source registered once");
+
+  const [c1, c2, c3] = doc.tracks[0].items as VideoItem[];
+  // Laid end to end: the removed spans become the frames that simply aren't there.
+  a(c1.from === 0 && c1.durationInFrames === 60, "first clip is 2s");
+  a(c2.from === 60 && c2.durationInFrames === 90, "second starts where the first ends, 3s long");
+  a(c3.from === 150 && c3.durationInFrames === 15, "third continues, 0.5s long");
+  a(docDuration(doc) === 165, `total is the trimmed length, not the original (got ${docDuration(doc)})`);
+
+  // And each clip plays the right footage — that is what makes the cut correct.
+  a(c1.sourceIn === 0 && c1.sourceOut === 2, "clip 1 plays 0-2s of the source");
+  a(c2.sourceIn === 5 && c2.sourceOut === 8, "clip 2 SKIPS the 2-5s the planner removed");
+  a(c3.sourceIn === 10 && c3.sourceOut === 10.5, "clip 3 skips 8-10s too");
+
+  a(docFromCutPlan({ ...plan, ranges: [] }, SIZE, "/x.mp4") === null, "an empty plan builds nothing");
+
+  // Through the real planner, from a real transcript with a real silence.
+  const transcript: Transcript = {
+    words: [
+      { text: "one", start: 0.0, end: 0.4 },
+      { text: "two", start: 0.4, end: 0.9 },
+      // a 3-second hole
+      { text: "three", start: 3.9, end: 4.4 },
+    ],
+    segments: [], durationSeconds: 5, language: "en",
+  } as Transcript;
+  const real = planCuts(transcript, DEFAULT_THRESHOLDS);
+  const realDoc = docFromCutPlan(real, SIZE, "/api/media/p/a.mp4")!;
+  a(realDoc.tracks[0].items.length === real.ranges.length, "a real plan maps range-for-range");
+  a(isValidDoc(realDoc), "and is valid");
+  a(docDuration(realDoc) < 5 * FPS, "the silence really is gone from the timeline");
 }
 
 head("viewer timecode");
