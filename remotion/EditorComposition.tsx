@@ -1,7 +1,7 @@
 import React, { useMemo } from "react";
-import { AbsoluteFill, Audio, Img, OffthreadVideo, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, Audio, Img, OffthreadVideo, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import { evalSceneCode } from "./DynamicScene";
-import { springIn } from "./motion";
+import { SPRINGS } from "./motion";
 import { presetStyle, visibleCharacters, wordProgress } from "../lib/editor-effects";
 import {
   captionPageAt,
@@ -283,8 +283,17 @@ function useAnimationProgress(item: EditorItem) {
 
   const inSpec = item.animateIn;
   const outSpec = item.animateOut;
+  // `durationInFrames` stretches the spring to the requested length. Driving it
+  // with a plain delayed spring instead — as this first did — ignores the field
+  // entirely, because a spring's length comes from its config, so changing the
+  // number in Properties did nothing.
   const inProgress = inSpec && inSpec.preset !== "none"
-    ? springIn(frame, fps, 0, "SNAPPY")
+    ? spring({
+        frame,
+        fps,
+        config: SPRINGS.SNAPPY,
+        durationInFrames: Math.max(1, inSpec.durationInFrames),
+      })
     : 1;
   const outProgress = outSpec && outSpec.preset !== "none"
     ? interpolate(

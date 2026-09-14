@@ -164,6 +164,40 @@ registerRoot(() => (
       try { fs.unlinkSync(animEntry); } catch {}
     }
 
+    // The entrance LENGTH must actually matter. This is the case that shipped
+    // broken: the spring's duration came from its config, so the frames field in
+    // Properties changed nothing. At frame 6 a 4-frame entrance has settled while
+    // a 40-frame one is still moving, so the two must render differently.
+    const lengthShot = async (durationInFrames: number, label: string) => {
+      let d = emptyDoc(SIZE);
+      d = addItem(d, d.tracks[0].id, {
+        type: "solid", id: "anim", from: 0, durationInFrames: 60, layout: { ...full },
+        color: "#ffaa00", animateIn: { preset: "rise", durationInFrames },
+      } as SolidItem);
+      const entry = path.join(scenesDir, `_editordoc_len_${label}_${Date.now().toString(36)}.tsx`);
+      fs.writeFileSync(entry, `import React from "react";
+import { Composition, registerRoot } from "remotion";
+import { EditorComposition } from "../EditorComposition";
+const doc = ${JSON.stringify(d)} as never;
+registerRoot(() => (
+  <Composition id="Scene" component={EditorComposition as never} durationInFrames={60}
+    fps={${SIZE.fps}} width={${SIZE.width}} height={${SIZE.height}} defaultProps={{ doc }} />
+));
+`, "utf-8");
+      try {
+        const serve = await bundle({ entryPoint: entry, publicDir: path.join(process.cwd(), "public") });
+        const comp = await selectComposition({ serveUrl: serve, id: "Scene" });
+        const out = path.join(tmp, `len_${label}.png`);
+        await renderStill({ composition: comp, serveUrl: serve, output: out, frame: 6, imageFormat: "png" });
+        return fs.readFileSync(out);
+      } finally {
+        try { fs.unlinkSync(entry); } catch {}
+      }
+    };
+    const quick = await lengthShot(4, "quick");
+    const slow = await lengthShot(40, "slow");
+    a(!quick.equals(slow), "the entrance LENGTH changes what frame 6 looks like");
+
     // Windowed scene items: the mechanism that lets a generated edit be split
     // into blocks while its animated title cards keep rendering as authored.
     const windowDoc = (() => {
