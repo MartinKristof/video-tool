@@ -2,6 +2,7 @@
 
 import React from "react";
 import Editor, { type BeforeMount } from "@monaco-editor/react";
+import type { languages } from "monaco-editor";
 import Icon from "@/components/ui/Icon";
 
 const VHS_KEYWORDS = [
@@ -57,7 +58,7 @@ const VHS_SET_OPTIONS = [
 ];
 
 const registerVHSLanguage: BeforeMount = (monaco) => {
-  if (monaco.languages.getLanguages().some((l) => l.id === "vhs")) return;
+  if (monaco.languages.getLanguages().some((l: languages.ILanguageExtensionPoint) => l.id === "vhs")) return;
 
   monaco.languages.register({ id: "vhs" });
 

@@ -73,12 +73,12 @@ const BackgroundDots: React.FC = () => {
 // Channel-ready framing for the Brand Deal Spy screen recording: the raw
 // capture sits in a rounded, shadowed panel over the animated dot-grid
 // background — filling a clean 16:9 frame, recording pixels untouched.
-export interface FramedRecordingProps {
+export type FramedRecordingProps = {
   videoSrc: string; // staticFile() path to the recording
   aspect: number; // recording width / height
   heightFraction?: number; // panel height as a fraction of canvas height
   showLogo?: boolean;
-}
+};
 
 const FramedRecording: React.FC<FramedRecordingProps> = ({
   videoSrc,

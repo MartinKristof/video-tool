@@ -426,6 +426,11 @@ export default function Home() {
   }
 
   // ───── Per-type screen: filtered projects + new-project tile ─────
+  // Unreachable: the picker above returns whenever selectedType is null and no
+  // collection is selected, and the collection screen returns whenever one is.
+  // TypeScript can't narrow across that compound guard, so state it explicitly
+  // rather than assert with `!` — this is what broke `next build`.
+  if (selectedType === null) return null;
   const meta = getAnimationTypeMeta(selectedType);
   // Normalised so the merged Animation tile lists the 123 legacy "broll"
   // projects alongside the rest — they are the same thing.

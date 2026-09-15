@@ -37,6 +37,21 @@
     // mapping then resolved its "@/..." imports to THIS app's lib/ — so it
     // contributed 52 of ~102 bogus errors and made `tsc --noEmit` useless as
     // a signal. Typecheck it from its own directory.
-    "video-studio"
+    "video-studio",
+    // Project DATA, not source. Every project's scene.tsx is written by the AI
+    // and evaluated at runtime by evalSceneCode, where "../motion" and friends
+    // resolve inside the eval sandbox rather than on disk. Type-checking 313
+    // generated scenes as part of the app broke `next build` outright.
+    "data",
+    // The standalone GIF-batch pipeline: _gifbatch.tsx is its own registerRoot
+    // entry (never built by Next) and the .built.tsx scenes under scenes/gen
+    // are generated output whose object literals widen to `string` instead of
+    // the `Block` union. Fixing them by hand is pointless — they regenerate.
+    "remotion/_gifbatch.tsx",
+    "remotion/scenes/gen",
+    // Scene templates carry placeholders (__CONTENT__) and are not valid TS
+    // until substituted.
+    "remotion/scenes/_*.template.tsx",
+    "scripts/aichat-template.tsx"
   ]
 }

@@ -20,7 +20,7 @@ import {
 // ===== Editable parameters (the snippet form fills these in) =====
 const PROMPT = "Track my competitor's prices on Amazon.";
 // ANSWER_MODE: "text" | "images"
-const ANSWER_MODE = "text";
+const ANSWER_MODE: "text" | "images" = "text";
 const ANSWER_TEXT = "Paste the AI's answer here — plain text is fine. It types out line by line, keeping your paragraph breaks.";
 const ANSWER_IMAGES: string[] = [
 ];
@@ -28,7 +28,10 @@ const SHOW_LOGO = true;
 // =================================================================
 
 const NO_OUTRO = !SHOW_LOGO;
-const IMAGE_MODE = ANSWER_MODE === "images" && ANSWER_IMAGES.length > 0;
+// ANSWER_MODE is rewritten in place by the snippet form before this file is
+// evaluated, so the comparison is live at runtime even though TypeScript
+// narrows the declaration above to its default literal and calls it dead.
+const IMAGE_MODE = (ANSWER_MODE as string) === "images" && ANSWER_IMAGES.length > 0;
 
 export const fps = 25;
 // 15s with the Apify wordmark outro; ~11s without.
