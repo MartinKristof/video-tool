@@ -22,6 +22,7 @@ import {
   makeId, moveItem, removeItem, reorderTrack, rippleRemoveItem, setLayout,
   captionPageAt, cloneItem, duplicateItem, moveItemToTrack, paginateCaptions,
   hasRoomAt, resizeLayout, snapBox, splitItem, trackWithRoomAt, trimItem, updateItem,
+  fitSceneItem, retimeSceneCode, sceneFit,
   type Asset, type CaptionToken, type EditorDoc, type SceneItem, type SolidItem, type TextItem, type VideoItem,
 } from "../lib/editor-doc";
 
@@ -615,6 +616,78 @@ head("viewer timecode");
   a(timecode(-5, 25) === "00:00:00:00", "never negative");
   a(timecode(30, 0) === "00:00:01:05", "survives a zero fps rather than dividing by it");
 }
+
+head("a placed scene retimes; a windowed one keeps its authored timing");
+{
+  // A snippet authored at 30fps, five seconds long.
+  const AUTHORED = [
+    'import React from "react";',
+    "export const fps = 30;",
+    "export const durationInFrames = 150;",
+    "export default function Card() { return null; }",
+  ].join("\n");
+
+  const out = retimeSceneCode(AUTHORED, 125, 25);
+  a(/export const durationInFrames = 125;/.test(out), "declared length restated in document frames");
+  a(/export const fps = 25;/.test(out), "and the rate with it");
+  a(retimeSceneCode(out, 125, 25) === out, "idempotent — re-reading the meta gives the same length back");
+  a(!/150|= 30;/.test(out), "the authored numbers are gone, not merely shadowed");
+
+  a(retimeSceneCode('export const durationInFrames: number = 90;', 40, 25).includes("= 40;"),
+    "survives a type annotation on the declaration");
+  a(retimeSceneCode("const durationInFrames = 150;", 40, 25) === "const durationInFrames = 150;",
+    "a non-exported local of the same name is left alone");
+
+  const placed: SceneItem = {
+    type: "scene", id: "s1", from: 0, durationInFrames: 125, layout: { ...box },
+    code: AUTHORED, snippet: { id: "Card", values: {} },
+  };
+  const imported: SceneItem = {
+    type: "scene", id: "s2", from: 0, durationInFrames: 125, layout: { ...box },
+    code: AUTHORED, sourceOffsetFrames: 300,
+  };
+  a(sceneFit(placed) === "retime", "snippet provenance implies a whole piece");
+  a(sceneFit(imported) === "window", "anything else is a window onto a longer composition");
+  a(sceneFit({ ...placed, fit: "window" }) === "window", "an explicit fit wins over the inference");
+
+  a(fitSceneItem(placed, 25).code.includes("= 125;"), "a retiming item is brought into document units");
+  a(fitSceneItem(imported, 25).code === AUTHORED, "a window is never rewritten — its timing is the original's");
+}
+
+head("resizing a placed scene moves its exit; resizing a window moves the window");
+{
+  const code = ["export const fps = 25;", "export const durationInFrames = 100;", "export default function C(){return null;}"].join("\n");
+  const placed: SceneItem = {
+    type: "scene", id: "sc", from: 0, durationInFrames: 100, layout: { ...box },
+    code, snippet: { id: "Card", values: {} }, fit: "retime",
+  };
+  const windowed: SceneItem = { ...placed, id: "wn", snippet: undefined, fit: "window", sourceOffsetFrames: 0 };
+
+  let d = emptyDoc(SIZE);
+  const tid = d.tracks[0].id;
+  d = addItem(d, tid, placed);
+  d = addItem(d, tid, { ...windowed, from: 200 });
+
+  const stretched = trimItem(d, "sc", "right", 50, FPS);
+  const sc = findItem(stretched, "sc")!.item as SceneItem;
+  a(sc.durationInFrames === 150, "the block is longer");
+  a(/durationInFrames = 150;/.test(sc.code), "and the animation now ends where the block ends");
+
+  const shrunk = trimItem(stretched, "sc", "right", -100, FPS);
+  const sc2 = findItem(shrunk, "sc")!.item as SceneItem;
+  a(/durationInFrames = 50;/.test(sc2.code), "shrinking pulls the exit back in too");
+
+  const fromLeft = trimItem(d, "sc", "left", 20, FPS);
+  const sc3 = findItem(fromLeft, "sc")!.item as SceneItem;
+  a((sc3.sourceOffsetFrames ?? 0) === 0, "a retiming scene never skips into its own middle");
+  a(/durationInFrames = 80;/.test(sc3.code), "it replays in full over the length it now has");
+
+  const win = trimItem(d, "wn", "left", 20, FPS);
+  const wn = findItem(win, "wn")!.item as SceneItem;
+  a(wn.sourceOffsetFrames === 20, "a window still slides");
+  a(/durationInFrames = 100;/.test(wn.code), "and keeps the composition's authored length");
+}
+
 
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);
 if (fail) process.exit(1);

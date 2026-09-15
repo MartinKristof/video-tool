@@ -190,6 +190,21 @@ export interface SceneItem extends ItemBase {
    * way `trimBefore` windows a video.
    */
   sourceOffsetFrames?: number;
+  /**
+   * What resizing this item means.
+   *
+   * "window" (the default for imported cards) keeps the embedded composition at
+   * its authored timing and slides `sourceOffsetFrames` — dragging an edge moves
+   * which stretch you see.
+   *
+   * "retime" makes the animation span the item: its entrance sits at the item's
+   * start and its exit at the item's end, so stretching the block stretches the
+   * animation. A placed snippet or a generated animation is a whole piece rather
+   * than a window onto a longer one, so that is what it gets.
+   *
+   * Absent, `sceneFit` infers it — anything carrying snippet provenance retimes.
+   */
+  fit?: "window" | "retime";
 }
 
 export type EditorItem =
@@ -456,6 +471,52 @@ export function moveItem(doc: EditorDoc, itemId: string, deltaFrames: number): E
 }
 
 /**
+ * How this scene should behave when its item is resized. A block placed from the
+ * snippet library (or generated as a whole) is a piece in its own right and
+ * retimes; anything else is a window onto a longer composition.
+ */
+export function sceneFit(item: SceneItem): "window" | "retime" {
+  return item.fit ?? (item.snippet ? "retime" : "window");
+}
+
+/**
+ * Rewrite a scene's declared length so it matches the frames it will actually
+ * receive.
+ *
+ * A scene times its own exit against its module-scope `durationInFrames` — e.g.
+ * `inOutEnvelope(frame, fps, durationInFrames)` starts the outro at
+ * `durationInFrames - exitTail`. Placed unchanged, a 150-frame 30fps card inside
+ * a 125-frame 25fps slot only ever sees frames 0..124, so that outro is never
+ * reached and the card cuts hard. Both consts move to composition units, which
+ * also makes the rewrite idempotent: reading the meta back gives the same length
+ * instead of converting a second time.
+ *
+ * Only the module-scope `export const` declarations are touched, matched at the
+ * start of a line the way the snippet substitution does.
+ */
+export function retimeSceneCode(code: string, durationInFrames: number, fps: number): string {
+  if (!code) return code;
+  const frames = Math.max(1, Math.round(durationInFrames));
+  const rate = Math.max(1, Math.round(fps));
+  let out = code.replace(
+    /^(\s*export\s+const\s+durationInFrames\s*(?::\s*number\s*)?=\s*)[\d.]+(\s*;?)/m,
+    (_m, head, tail) => `${head}${frames}${tail}`,
+  );
+  out = out.replace(
+    /^(\s*export\s+const\s+fps\s*(?::\s*number\s*)?=\s*)[\d.]+(\s*;?)/m,
+    (_m, head, tail) => `${head}${rate}${tail}`,
+  );
+  return out;
+}
+
+/** Apply `retimeSceneCode` to an item when, and only when, it retimes. */
+export function fitSceneItem(item: SceneItem, fps: number): SceneItem {
+  if (sceneFit(item) !== "retime") return item;
+  const code = retimeSceneCode(item.code, item.durationInFrames, fps);
+  return code === item.code ? item : { ...item, code };
+}
+
+/**
  * Drag one edge. The opposite edge stays put, and for media the source trim
  * moves with it so the same footage keeps playing under the cursor.
  */
@@ -475,11 +536,15 @@ export function trimItem(
     const maxDuration = max - item.from;
     const duration = Math.max(1, Math.min(maxDuration, item.durationInFrames + deltaFrames));
     const applied = duration - item.durationInFrames;
-    return replaceItem(doc, itemId, (i) =>
-      hasSource(i) && i.sourceOut != null
-        ? { ...i, durationInFrames: duration, sourceOut: i.sourceOut + applied / fps }
-        : { ...i, durationInFrames: duration },
-    );
+    return replaceItem(doc, itemId, (i) => {
+      if (hasSource(i) && i.sourceOut != null) {
+        return { ...i, durationInFrames: duration, sourceOut: i.sourceOut + applied / fps };
+      }
+      const next = { ...i, durationInFrames: duration };
+      // A retiming scene spans its item, so a longer block is a longer animation
+      // and its exit follows the new end instead of staying at the authored one.
+      return next.type === "scene" ? fitSceneItem(next, fps) : next;
+    });
   }
 
   // Left edge: `from` moves, the right edge is fixed.
@@ -496,6 +561,9 @@ export function trimItem(
     // has to move with it — seconds into a file, or frames into an embedded
     // composition. Without this a trimmed scene restarts from its old frame.
     if (i.type === "scene") {
+      // Only a window slides — a retiming scene replays in full over whatever
+      // length it now has, so moving its start must not skip into its middle.
+      if (sceneFit(i) === "retime") return fitSceneItem(next as SceneItem, fps);
       return { ...next, sourceOffsetFrames: Math.max(0, (i.sourceOffsetFrames ?? 0) + applied) };
     }
     if (!hasSource(i)) return next;

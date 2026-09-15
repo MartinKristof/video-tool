@@ -65,6 +65,7 @@ import {
   type TextItem,
   type TextStyle,
   type VideoItem,
+  retimeSceneCode,
 } from "./editor-doc";
 import { ANIMATION_PRESETS, presetsFor, type AnimationPreset } from "./editor-effects";
 import {
@@ -1135,12 +1136,16 @@ export function applyDocTool(
           from,
           durationInFrames: duration,
           layout: fullFrameLayout(doc.size),
-          code,
+          // Restated in document units: a scene times its own exit against its
+          // declared length, so a 30fps card dropped into a 25fps slot would
+          // never reach the outro and would cut hard instead.
+          code: retimeSceneCode(code, duration, fps),
           // The identity and the values it was built from. The substitution runs
           // ONE WAY, so without this the parameter form could never be reopened —
           // which is the difference between a block the person can reword and a
           // block they are stuck with.
           snippet: { id: sn.id, values },
+          fit: "retime",
         };
         const set = Object.keys(values);
         return place(

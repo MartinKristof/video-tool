@@ -28,7 +28,7 @@ import TypeBadge from "@/components/ui/TypeBadge";
 import Segmented from "@/components/ui/Segmented";
 import { useCodeHistory } from "@/hooks/useCodeHistory";
 import { useDocHistory } from "@/hooks/useDocHistory";
-import { addItem, docDuration, docFromScene, emptyDoc, findItem, fullFrameLayout, makeId, trackWithRoomAt, updateItem, type EditorDoc, type SceneItem } from "@/lib/editor-doc";
+import { addItem, docDuration, docFromScene, emptyDoc, findItem, fitSceneItem, fullFrameLayout, makeId, retimeSceneCode, trackWithRoomAt, updateItem, type EditorDoc, type SceneItem } from "@/lib/editor-doc";
 import { docFromCutPlan, docFromVideoEdit, suspiciousSegments } from "@/lib/editor-import";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import type { PlayerRef } from "@remotion/player";
@@ -686,8 +686,11 @@ export default function ProjectEditor() {
       // lib/snippet-template.ts runs one way only, so these cannot be recovered
       // from the rendered code afterwards.
       snippet: provenance,
+      // A placed snippet is a whole piece, not a window onto a longer one, so
+      // resizing it retimes the animation rather than sliding what you see.
+      fit: "retime" as const,
     };
-    commitDoc(addItem(doc, trackId, item));
+    commitDoc(addItem(doc, trackId, fitSceneItem(item, doc.size.fps)));
     setSelectedItemIds(new Set([item.id]));
   }, [doc, currentFrame, commitComposition, commitDoc]);
 
@@ -1360,11 +1363,17 @@ export default function ProjectEditor() {
             // typing seconds, AiChat's logo flag), so the block has to be re-timed
             // with it — otherwise the animation and its slot disagree.
             const re = evalSceneCode(nextCode);
+            const reDur = re
+              ? sceneFramesAtFps({ durationInFrames: re.durationInFrames, fps: re.fps }, docView.size.fps)
+              : undefined;
             commitDoc(updateItem<SceneItem>(docView, editingSnippetId, {
-              code: nextCode,
-              ...(re
-                ? { durationInFrames: sceneFramesAtFps({ durationInFrames: re.durationInFrames, fps: re.fps }, docView.size.fps) }
-                : {}),
+              // Re-rendered code carries the snippet's own length again, so it is
+              // put back into document units or the exit stops being reachable.
+              code: reDur
+                ? retimeSceneCode(nextCode, reDur, docView.size.fps)
+                : nextCode,
+              ...(reDur !== undefined ? { durationInFrames: reDur } : {}),
+              fit: "retime",
               snippet: { id: findItem(docView, editingSnippetId)?.item.type === "scene"
                 ? (findItem(docView, editingSnippetId)!.item as SceneItem).snippet!.id
                 : "", values },
