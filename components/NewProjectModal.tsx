@@ -27,7 +27,7 @@ interface SnippetSummary {
   code: string;
 }
 
-type VideoMode = "smarttrim" | "compose";
+type VideoMode = "smarttrim" | "compose" | "manual";
 
 interface NewProjectModalProps {
   open: boolean;
@@ -332,7 +332,9 @@ export default function NewProjectModal({ open, onClose, initialType, onCreated 
     //
     // Smart trim gets none: it builds its own document from the cut plan.
     const composeSettings = { resolution, orientation, fps };
-    const startsAsTimeline = isVideo && videoMode === "compose";
+    // "manual" gets one too: the whole point is to land on a timeline with the
+    // footage ready and nothing done to it yet.
+    const startsAsTimeline = isVideo && (videoMode === "compose" || videoMode === "manual");
     const projectBody = {
       name: name.trim(),
       animationType,
@@ -430,7 +432,9 @@ export default function NewProjectModal({ open, onClose, initialType, onCreated 
       // visible progress panel.
       onCreated({
         projectId: project.id,
-        autoAction: isVideo ? videoMode : undefined,
+        // "manual" deliberately has no first pass — the timeline opens with the
+        // footage imported and untouched.
+        autoAction: isVideo && videoMode !== "manual" ? videoMode : undefined,
       });
     } catch (err) {
       console.error("[create] failed", err);
@@ -652,7 +656,7 @@ export default function NewProjectModal({ open, onClose, initialType, onCreated 
                 <FieldLabel hint="How should we build your starting cut?">
                   First pass
                 </FieldLabel>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
                   <ModeCard
                     active={videoMode === "smarttrim"}
                     accent="#FF64B8"
@@ -669,13 +673,22 @@ export default function NewProjectModal({ open, onClose, initialType, onCreated 
                     subtitle="The AI edits from your footage + notes"
                     onClick={() => setVideoMode("compose")}
                   />
+                  <ModeCard
+                    active={videoMode === "manual"}
+                    accent="#6CD99A"
+                    icon="film"
+                    title="I'll cut it"
+                    subtitle="Open a timeline with your footage and nothing done to it"
+                    onClick={() => setVideoMode("manual")}
+                  />
                 </div>
                 <div
                   className="mono"
                   style={{ fontSize: 10, color: "var(--text-3)", marginTop: 8 }}
                 >
-                  After you create, we analyze the footage and build this first cut automatically —
-                  then you refine it by chatting.
+                  {videoMode === "manual"
+                    ? "Your footage is imported and the timeline opens empty. Smart trim and Compose stay available from Tools whenever you want them."
+                    : "After you create, we analyze the footage and build this first cut automatically — then you refine it by chatting."}
                 </div>
               </div>
             )}

@@ -92,6 +92,11 @@ export default function DocTimeline({
   const [containerWidth, setContainerWidth] = useState(900);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [captionsBusy, setCaptionsBusy] = useState<string | null>(null);
+  // The same file list serves two jobs: dropping a clip on a track, and turning
+  // a clip's speech into subtitles. Captions used to be reachable only as a
+  // secondary button inside "Add media", which is not where anyone looks for
+  // subtitles — so the rail asks for them directly and the list follows.
+  const [pickerMode, setPickerMode] = useState<"insert" | "captions">("insert");
   const [clipboard, setClipboard] = useState<EditorItem | null>(null);
   /** Tool the pointer is over, so the rail can name it without a delay. */
   const [hoveredTool, setHoveredTool] = useState<string | null>(null);
@@ -721,7 +726,8 @@ export default function DocTimeline({
   );
 
   const tools: { id: string; icon: string; label: string; onClick: () => void; disabled?: boolean }[] = [
-    { id: "media", icon: "folder", label: "Add media", onClick: () => setPickerOpen((v) => !v) },
+    { id: "media", icon: "folder", label: "Add media", onClick: () => { setPickerMode("insert"); setPickerOpen((v) => (pickerMode === "insert" ? !v : true)); } },
+    { id: "captions", icon: "subtitles", label: "Add subtitles from speech", onClick: () => { setPickerMode("captions"); setPickerOpen((v) => (pickerMode === "captions" ? !v : true)); } },
     { id: "text", icon: "type", label: "Add text", onClick: () => addLayer("text") },
     { id: "solid", icon: "square", label: "Add solid", onClick: () => addLayer("solid") },
     { id: "track", icon: "rows", label: "Add track", onClick: () => commit(addTrack(doc)) },
@@ -813,15 +819,26 @@ export default function DocTimeline({
 
       {pickerOpen && (
         <div style={{ padding: 8, borderBottom: "0.5px solid var(--line-1)", background: "var(--bg-2)", maxHeight: 140, overflowY: "auto" }}>
-          {!mediaFiles || mediaFiles.length === 0 ? (
-            <div style={{ fontSize: 11, color: "var(--text-3)" }}>No media in this project yet.</div>
+          {pickerMode === "captions" && (
+            <div style={{ fontSize: 10, color: "var(--text-3)", marginBottom: 6 }}>
+              Pick a clip to transcribe. Its words land as an editable subtitle layer at the playhead.
+            </div>
+          )}
+          {(() => {
+            const shown = (mediaFiles ?? []).filter(
+              (f) => pickerMode === "insert" || f.type === "video" || f.type === "audio",
+            );
+            return shown.length === 0 ? (
+            <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+              {pickerMode === "captions" ? "No video or audio in this project to transcribe." : "No media in this project yet."}
+            </div>
           ) : (
-            mediaFiles.map((f) => (
+            shown.map((f) => (
               <div key={f.path} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
                 <span className="mono" style={{ fontSize: 10, color: "var(--text-1)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {f.name}
                 </span>
-                {doc.tracks.map((t) => (
+                {pickerMode === "insert" && doc.tracks.map((t) => (
                   <button key={t.id} onClick={() => insertMedia(f, t.id)} style={toolBtn}>
                     → {t.name}
                   </button>
@@ -830,15 +847,16 @@ export default function DocTimeline({
                   <button
                     onClick={() => addCaptions(f)}
                     disabled={captionsBusy !== null}
-                    title="Transcribe this file and add its words as a captions layer"
+                    title="Transcribe this file and add its words as a subtitle layer"
                     style={{ ...toolBtn, color: "var(--accent)" }}
                   >
-                    {captionsBusy === f.path ? "transcribing…" : "captions"}
+                    {captionsBusy === f.path ? "transcribing…" : pickerMode === "captions" ? "add subtitles" : "subtitles"}
                   </button>
                 )}
               </div>
             ))
-          )}
+          );
+          })()}
         </div>
       )}
 

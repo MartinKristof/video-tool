@@ -131,7 +131,12 @@ export default function ActorLookup({ onPick }: ActorLookupProps) {
             textTransform: "uppercase",
           }}
         >
-          Fill from Apify Store
+          Search the Apify Store
+        </span>
+        {/* The field has always searched; the heading said "fill", which read as
+            paste-a-link-here and hid it. */}
+        <span style={{ fontSize: 10, color: "var(--text-3)", textTransform: "none", letterSpacing: 0 }}>
+          by name, or paste a link
         </span>
       </div>
 

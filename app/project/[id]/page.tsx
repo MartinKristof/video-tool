@@ -302,6 +302,12 @@ export default function ProjectEditor() {
     commitComposition(cp.code);
   }
 
+  // Compose means two different things depending on what is already there:
+  // assemble a cut from nothing, or add to one that exists. Both the menu label
+  // and the prompt follow that, so re-running it can never wipe a cut.
+  const docHasContent = !!doc?.tracks.some((t) => t.items.length > 0);
+  const composeLabel = docHasContent ? "Compose into this cut" : "Compose (re-run)";
+
   async function runFirstPass(mode: "smarttrim" | "compose") {
     // Editorial notes can live in the notes box (notionContent) or the prompt box
     // (initialPrompt). The generate route falls back across both; here we just
@@ -338,8 +344,11 @@ export default function ProjectEditor() {
           ? "Follow my editorial notes: keep the highlighted passages and honour the inline comments."
           : "No editorial notes were attached — use your judgment about what is worth keeping.";
         const prompt = doc
-          ? `Assemble a first cut on the timeline. ${notesLine}\n\n` +
-            "Work in this order: read each source's transcript to find the passages worth using, lay them out in order with sequence_media, then put a branded card between the sections and an end card on the finish. Choose passages that are self-contained — start on a complete thought, end before the next one begins — and prefer an auto-reframed version of a clip where one exists. Render a few frames when you're done and fix anything that reads badly."
+          ? (docHasContent
+              ? `Build on the cut that is already on the timeline — do not start it over. ${notesLine}\n\n` +
+                "Keep every clip and card that is there; the arrangement is deliberate. Read the sources' transcripts to find passages worth ADDING, place them with sequence_media where they belong, and add a branded card only where one is genuinely missing. Render a few frames when you're done and fix anything that reads badly."
+              : `Assemble a first cut on the timeline. ${notesLine}\n\n` +
+                "Work in this order: read each source's transcript to find the passages worth using, lay them out in order with sequence_media, then put a branded card between the sections and an end card on the finish. Choose passages that are self-contained — start on a complete thought, end before the next one begins — and prefer an auto-reframed version of a clip where one exists. Render a few frames when you're done and fix anything that reads badly.")
           : hasNotes
             ? "Build a first cut from my editorial notes: keep the highlighted passages, follow the inline comments, and structure it into topic segments. Ground every cut in the transcript timestamps and scene cuts. If an auto-reframed version of a clip is available, use it."
             : "Build a strong first cut from the transcript and scene cuts: pick the most compelling, self-contained moments and assemble them cleanly. (No editorial notes were attached — use your judgment.) If an auto-reframed version of a clip is available, use it.";
@@ -968,10 +977,11 @@ export default function ProjectEditor() {
                 }}
               >
                 {[
+                  // Snippets and Assets are tabs in the bottom panel now, so
+                  // listing them here was a second door to the same room.
                   { icon: "search", label: "Analyze footage", onClick: () => setAnalyzeOpen(true) },
                   { icon: "sparkle", label: "Smart trim (re-run)", onClick: () => setSmartTrimOpen(true) },
-                  { icon: "layers", label: "Snippets", onClick: () => setSnippetsOpen(true) },
-                  { icon: "folder", label: "Assets", onClick: () => setAssetsOpen(true) },
+                  { icon: "film", label: composeLabel, onClick: () => runFirstPass("compose") },
                 ].map((item) => (
                   <button
                     key={item.label}
