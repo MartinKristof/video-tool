@@ -63,6 +63,11 @@ interface Props {
   /** Selection is shared with the canvas, so it lives above both of them. */
   selectedIds: Set<string>;
   onSelectionChange: (next: Set<string>) => void;
+  /**
+   * Opens the "prompt an animation" dialog. Owned by the page, which has the
+   * project's settings and commits the result; the rail only asks for it.
+   */
+  onPromptAnimation?: () => void;
 }
 
 const ITEM_COLORS: Record<string, string> = {
@@ -84,6 +89,7 @@ const ITEM_ICONS: Record<string, string> = {
 export default function DocTimeline({
   doc, onChange, currentFrame, onSeek, onScrubStart, onTogglePlay,
   mediaFiles, mediaDurations, projectId, selectedIds, onSelectionChange,
+  onPromptAnimation,
 }: Props) {
   const [zoom, setZoom] = useState(1);
   const [dragState, setDragState] = useState<DragState | null>(null);
@@ -728,6 +734,9 @@ export default function DocTimeline({
   const tools: { id: string; icon: string; label: string; onClick: () => void; disabled?: boolean }[] = [
     { id: "media", icon: "folder", label: "Add media", onClick: () => { setPickerMode("insert"); setPickerOpen((v) => (pickerMode === "insert" ? !v : true)); } },
     { id: "captions", icon: "subtitles", label: "Add subtitles from speech", onClick: () => { setPickerMode("captions"); setPickerOpen((v) => (pickerMode === "captions" ? !v : true)); } },
+    ...(onPromptAnimation
+      ? [{ id: "prompt", icon: "sparkle", label: "Prompt an animation", onClick: onPromptAnimation }]
+      : []),
     { id: "text", icon: "type", label: "Add text", onClick: () => addLayer("text") },
     { id: "solid", icon: "square", label: "Add solid", onClick: () => addLayer("solid") },
     { id: "track", icon: "rows", label: "Add track", onClick: () => commit(addTrack(doc)) },

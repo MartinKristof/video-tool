@@ -6,6 +6,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import ChatPanel, { type ChatPanelHandle } from "@/components/ChatPanel";
 import AssetBrowser from "@/components/AssetBrowser";
+import PromptAnimationDialog from "@/components/PromptAnimationDialog";
 import SnippetBrowser from "@/components/SnippetBrowser";
 import SmartTrimDialog from "@/components/SmartTrimDialog";
 import AnalyzeDialog from "@/components/AnalyzeDialog";
@@ -29,7 +30,7 @@ import TypeBadge from "@/components/ui/TypeBadge";
 import Segmented from "@/components/ui/Segmented";
 import { useCodeHistory } from "@/hooks/useCodeHistory";
 import { useDocHistory } from "@/hooks/useDocHistory";
-import { addItem, docDuration, docFromScene, emptyDoc, findItem, fitSceneItem, fullFrameLayout, makeId, retimeSceneCode, trackWithRoomAt, updateItem, type EditorDoc, type SceneItem } from "@/lib/editor-doc";
+import { addItem, addTrack, docDuration, docFromScene, emptyDoc, findItem, fitSceneItem, fullFrameLayout, makeId, retimeSceneCode, trackWithRoomAt, updateItem, type EditorDoc, type SceneItem } from "@/lib/editor-doc";
 import { docFromCutPlan, docFromVideoEdit, suspiciousSegments } from "@/lib/editor-import";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import type { PlayerRef } from "@remotion/player";
@@ -109,6 +110,7 @@ export default function ProjectEditor() {
   const [firstPass, setFirstPass] = useState<FirstPassState | null>(null);
   // Video editor "Tools ▾" dropdown (Analyze / Smart trim / Snippets / Assets).
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [promptAnimOpen, setPromptAnimOpen] = useState(false);
   const toolsRef = useRef<HTMLDivElement>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [bgRemovedFlash, setBgRemovedFlash] = useState(false);
@@ -705,6 +707,54 @@ export default function ProjectEditor() {
   }, [doc, currentFrame, commitComposition, commitDoc]);
 
   /**
+   * Describe an animation, get it as a block on its own track at the playhead.
+   *
+   * Uses the same system prompt as the chat, so the house style and the motion
+   * bans are identical — what differs is that the result is ONE piece added to
+   * the timeline rather than a rewrite of the project's scene. It goes on a new
+   * track so it never displaces anything already laid down.
+   */
+  const generateAnimation = useCallback(async (promptText: string, images: string[]) => {
+    if (!doc || !project) return;
+    const res = await fetch("/api/generate-scene", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: promptText,
+        images,
+        projectSettings: project.settings,
+        animationType: project.animationType,
+        styleMode,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Generation failed");
+
+    const evaluated = evalSceneCode(data.code);
+    if (!evaluated) throw new Error("The scene came back but wouldn't compile. Try describing it differently.");
+    const duration = sceneFramesAtFps(
+      { durationInFrames: evaluated.durationInFrames, fps: evaluated.fps },
+      doc.size.fps,
+    );
+
+    const withTrack = addTrack(doc);
+    const trackId = withTrack.tracks[withTrack.tracks.length - 1].id;
+    const item: SceneItem = {
+      type: "scene",
+      id: makeId("scene"),
+      from: currentFrame,
+      durationInFrames: duration,
+      layout: fullFrameLayout(doc.size),
+      code: retimeSceneCode(data.code, duration, doc.size.fps),
+      // Generated whole, so resizing it retimes the animation rather than
+      // sliding a window over a longer one.
+      fit: "retime",
+    };
+    commitDoc(addItem(withTrack, trackId, item));
+    setSelectedItemIds(new Set([item.id]));
+  }, [doc, project, styleMode, currentFrame, commitDoc]);
+
+  /**
    * Put a brand asset on a track. In the code editor an asset's only use is its
    * `staticFile()` path on the clipboard; with a document open it can simply
    * become a layer.
@@ -1191,6 +1241,7 @@ export default function ProjectEditor() {
                         projectId={projectId}
                         selectedIds={selectedItemIds}
                         onSelectionChange={setSelectedItemIds}
+                        onPromptAnimation={() => setPromptAnimOpen(true)}
                       />
                       ) : (
                       <Timeline
@@ -1427,6 +1478,12 @@ export default function ProjectEditor() {
           if (asDoc) commitDoc(asDoc);
           else if (trimmedCode) commitComposition(trimmedCode);
         }}
+      />
+
+      <PromptAnimationDialog
+        open={promptAnimOpen}
+        onClose={() => setPromptAnimOpen(false)}
+        onGenerate={generateAnimation}
       />
 
       <AnalyzeDialog
