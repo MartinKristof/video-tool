@@ -17,6 +17,7 @@ import Timeline from "@/components/Timeline";
 import { evalSceneCode } from "@/remotion/DynamicScene";
 import { sceneFramesAtFps } from "@/lib/scene-eval";
 import type { Project, ChatMessage, TerminalAnnotations, StyleMode, TopicCardStyle, TransitionStyle } from "@/lib/types";
+import { normalizeAnimationType } from "@/lib/animation-types";
 import { getProjectSize } from "@/lib/types";
 import { buildTerminalExportPlan } from "@/lib/terminal-export";
 import { stripBackgroundsForTransparency } from "@/lib/transparent-bg";
@@ -864,7 +865,13 @@ export default function ProjectEditor() {
           flexShrink: 0,
         }}
       >
-        <IconButton icon="arrowLeft" onClick={() => router.push("/")} title="Back to projects" />
+        {/* Back to the list this project came from, not the root — the type now
+            has a URL of its own, so "back" can mean what it looks like. */}
+        <IconButton
+          icon="arrowLeft"
+          onClick={() => router.push(project ? `/${normalizeAnimationType(project.animationType)}` : "/")}
+          title="Back to projects"
+        />
         <Logo size={20} onClick={() => router.push("/")} />
         <div style={{ width: 1, height: 20, background: "var(--line-2)", marginLeft: 4 }} />
         <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.1 }}>
