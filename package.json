@@ -1,13 +1,13 @@
 {
   "name": "video-tool",
-  "version": "0.1.61",
+  "version": "0.1.62",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "studio": "npx remotion studio remotion/Root.tsx"
+    "studio": "npx remotion studio remotion/index.tsx"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",
