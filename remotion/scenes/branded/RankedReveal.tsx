@@ -38,12 +38,6 @@ const SAFE = { x: 250, y: 250, w: CANVAS.w - 500, h: CANVAS.h - 500 }; // 3340 x
 const SPR_BASE = { damping: 200 } as const;
 const SPR_HERO = { damping: 14, stiffness: 120, mass: 0.6 } as const;
 
-function useSpr(delay = 0, hero = false) {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  return spring({ frame, fps, delay, config: hero ? SPR_HERO : SPR_BASE });
-}
-
 // ============================================================================
 // LAYOUT WRAPPERS
 // ============================================================================
@@ -530,7 +524,7 @@ function Phase3() {
             transform: `translateY(${interpolate(cueProg, [0, 1], [20, 0])}px)`,
           }}
         >
-          Here's how to catch it
+          {"Here's how to catch it"}
         </div>
       </div>
     );
@@ -977,7 +971,6 @@ function Phase6() {
           const isWinner = i === 0;
           const fillProg = interpolate(frame, [14 + i * 8 + 6, 14 + i * 8 + 26], [0, row.score / 100], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
-          const winnerColor = isWinner ? C.green : C.blue;
           const winnerGlow = isWinner && winnerSettle > 0
             ? `0 0 ${30 + 10 * Math.sin(frame / 10)}px rgba(74,222,128,${0.3 * winnerSettle})`
             : "none";

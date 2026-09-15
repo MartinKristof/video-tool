@@ -87,7 +87,6 @@ export default function TerminalPreview({
   const [renderMs, setRenderMs] = useState<number | null>(null);
   const [examplesOpen, setExamplesOpen] = useState(false);
   const [drawMode, setDrawMode] = useState(false);
-  const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
   const [drawRect, setDrawRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [currentFrame, setCurrentFrame] = useState(0);
   const [bannerOpen, setBannerOpen] = useState(false);
@@ -278,7 +277,6 @@ export default function TerminalPreview({
 
     drawStartRef.current = null;
     drawRectRef.current = null;
-    setDrawStart(null);
     setDrawRect(null);
     playerRef.current?.pause();
 
@@ -293,7 +291,6 @@ export default function TerminalPreview({
     const finish = () => {
       drawStartRef.current = null;
       drawRectRef.current = null;
-      setDrawStart(null);
       setDrawRect(null);
       setDrawMode(false);
     };
@@ -306,7 +303,6 @@ export default function TerminalPreview({
       if (!drawStartRef.current) {
         drawStartRef.current = p;
         drawRectRef.current = { x: p.x, y: p.y, w: 0, h: 0 };
-        setDrawStart(p);
         setDrawRect(drawRectRef.current);
       } else {
         const rect = drawRectRef.current;

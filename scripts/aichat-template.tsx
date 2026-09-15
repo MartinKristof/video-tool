@@ -128,7 +128,6 @@ const TextAnswer: React.FC<{ charsShown: number }> = ({ charsShown }) => (
 const ImageAnswer: React.FC = () => (
   <div data-blk="0" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
     {ANSWER_IMAGES.map((src, i) => (
-      // eslint-disable-next-line @next/next/no-img-element
       <img key={i} src={src} alt={`answer ${i + 1}`} style={{ width: INNER, height: "auto", display: "block", borderRadius: 10 }} />
     ))}
   </div>

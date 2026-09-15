@@ -196,7 +196,6 @@ const ActorRiser: React.FC<ActorRiserProps> = ({
     if (wref.__actorriser_logged) return;
     wref.__actorriser_logged = true;
     const list = segments.map((seg, i) => `${seg.label}@${starts[i]}`).join(", ");
-    // eslint-disable-next-line no-console
     console.log(`CUT LIST (frames): ${list} | cuts end @${cutsEnd}, freeze holds to END@${total}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

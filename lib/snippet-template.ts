@@ -14,7 +14,7 @@
 // that happen to match inside JSX bodies are never touched because the
 // match anchors to start-of-line + the `const ` keyword.
 
-import type { ArrayParam, ImagesParam, Param, SnippetSchema } from "./snippet-schemas";
+import type { ArrayParam, Param, SnippetSchema } from "./snippet-schemas";
 
 export function renderSnippet(
   sourceCode: string,

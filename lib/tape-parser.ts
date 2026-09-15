@@ -97,7 +97,7 @@ export function normalizeTapeQuotes(source: string): string {
       // — i.e. the AI tried to escape and produced something VHS can't parse.
       const m = line.match(/^(\s*Type\s+)(["'`])((?:\\.|(?!\2).)*)\2(.*)$/);
       if (!m) return line;
-      const [, prefix, quote, body, trailing] = m;
+      const [, prefix, , body, trailing] = m;
       if (!/\\["'`]/.test(body)) return line; // no escaped quote, nothing to fix
       // Reverse the escapes to recover the literal intent.
       const literal = body.replace(/\\(["'`])/g, "$1");

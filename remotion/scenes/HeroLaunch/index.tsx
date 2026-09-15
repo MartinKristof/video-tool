@@ -14,7 +14,6 @@ import {
   AbsoluteFill,
   Sequence,
   useCurrentFrame,
-  useVideoConfig,
   interpolate,
 } from "remotion";
 import { FONT_CSS } from "./shared";
