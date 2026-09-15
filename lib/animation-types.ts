@@ -53,7 +53,7 @@ export const ANIMATION_TYPES: AnimationTypeMeta[] = [
  * Fold the legacy "broll" type into "animation".
  *
  * The two were never actually different: buildSystemPrompt has no branch for
- * either, and BROLL_DARK_PROMPT is appended to BOTH — so "B-Roll · dark,
+ * either, and OVERLAY_OPACITY_PROMPT is appended to BOTH — so "B-Roll · dark,
  * cinematic" and "Animation · generic motion graphics" were two doors into one
  * room, generating from a byte-identical 163,680-character prompt. The labels
  * promised a choice the tool could not deliver.

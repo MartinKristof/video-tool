@@ -1,5 +1,5 @@
 import { buildBasePrompt } from "./base";
-import { BROLL_DARK_PROMPT } from "./broll-dark";
+import { OVERLAY_OPACITY_PROMPT } from "./overlay-opacity";
 import { COLOR_SYSTEM_PROMPT } from "./colors";
 import { APIFY_LAYOUT_PROMPT } from "./apify-layout";
 import { buildVideoEditingPrompt } from "./video-editing";
@@ -43,7 +43,7 @@ export function buildSystemPrompt(
 
   // Overlay-opacity rule goes LAST so it overrides any style guidance that still
   // mentions translucent card fills.
-  prompt += "\n\n" + BROLL_DARK_PROMPT;
+  prompt += "\n\n" + OVERLAY_OPACITY_PROMPT;
 
   if (animationType === "video" && videoContext) {
     prompt += "\n\n" + buildVideoEditingPrompt(videoContext.projectId, videoContext.mediaFiles, videoContext.compFps, videoContext.topicCardStyle ?? "cards");

@@ -3,8 +3,13 @@
 // mentions translucent card fills. Applies to all non-terminal animation types —
 // an opaque fill reads correctly both in a standalone render and when the
 // animation is exported with a transparent background and overlaid on footage.
+//
+// It was called BROLL_DARK_PROMPT, which described neither what it does nor how
+// widely it is applied, and read like a b-roll style preset that had leaked onto
+// svg and video by accident. It hasn't: every type that can be exported with a
+// transparent background needs it.
 
-export const BROLL_DARK_PROMPT = `=== OVERLAY OPACITY (HARD RULE — overrides any earlier styling guidance) ===
+export const OVERLAY_OPACITY_PROMPT = `=== OVERLAY OPACITY (HARD RULE — overrides any earlier styling guidance) ===
 
 These animations are frequently exported with a transparent background and overlaid
 on top of existing video. A semi-transparent element looks fine on a dark preview
