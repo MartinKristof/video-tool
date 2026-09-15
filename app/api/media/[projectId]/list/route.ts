@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { getProject } from "@/lib/projects";
 import { isReframedFilename } from "@/lib/reframe";
+import { isGradedFilename } from "@/lib/grade";
 
 const VIDEO_EXTS = new Set([".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"]);
 const AUDIO_EXTS = new Set([".mp3", ".wav", ".m4a", ".aac"]);
@@ -42,6 +43,7 @@ function walkDir(dir: string, baseDir: string): MediaFile[] {
       files.push(...walkDir(fullPath, baseDir));
     } else if (entry.isFile()) {
       if (isReframedFilename(entry.name)) continue; // derived auto-reframe output
+      if (isGradedFilename(entry.name)) continue; // derived colour-grade output
       const ext = path.extname(entry.name).toLowerCase();
       const type = getFileType(ext);
       if (type === "other") continue; // Skip non-media files

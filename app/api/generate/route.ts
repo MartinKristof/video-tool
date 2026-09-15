@@ -9,6 +9,7 @@ import { listAssetPaths } from "@/lib/assets";
 import { getProject } from "@/lib/projects";
 import { buildEnrichedMediaFiles, type EnrichedMediaFile } from "@/lib/media-analysis";
 import { isReframedFilename } from "@/lib/reframe";
+import { isGradedFilename } from "@/lib/grade";
 import { getProjectSize } from "@/lib/types";
 import { analyzeSvgs, manifestForPrompt, diffForPrompt } from "@/lib/svg-analyzer";
 import { parseTape } from "@/lib/tape-parser";
@@ -48,6 +49,7 @@ function listMediaFiles(dir: string, baseDir: string): { name: string; path: str
     } else if (entry.isFile()) {
       // Skip derived auto-reframe outputs — they're not user uploads.
       if (isReframedFilename(entry.name)) continue;
+      if (isGradedFilename(entry.name)) continue;
       const ext = path.extname(entry.name).toLowerCase();
       const type = getMediaFileType(ext);
       if (type === "other") continue;

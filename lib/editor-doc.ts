@@ -95,6 +95,17 @@ interface MediaFields {
 
 export interface VideoItem extends ItemBase, MediaFields {
   type: "video";
+  /**
+   * A colour grade applied to THIS clip, as a LUT id from the picker.
+   *
+   * Export grades the whole finished video in one ffmpeg pass, which cannot say
+   * "this shot and not that one". So a graded clip points at a graded COPY of
+   * its footage instead — the look is in the file, which is why it shows in the
+   * preview and needs nothing from the renderer.
+   */
+  lut?: string;
+  /** The ungraded asset, kept so the look can be taken back off. */
+  baseAssetId?: string;
 }
 export interface AudioItem extends ItemBase, MediaFields {
   type: "audio";

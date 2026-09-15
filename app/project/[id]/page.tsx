@@ -1306,6 +1306,7 @@ export default function ProjectEditor() {
                   selectedIds={selectedItemIds}
                   onChange={commitDoc}
                   onEditSnippet={setEditingSnippetId}
+                  projectId={projectId}
                 />
               ) : (
               <ChatPanel

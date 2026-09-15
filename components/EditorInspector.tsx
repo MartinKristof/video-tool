@@ -3,7 +3,7 @@
 import React from "react";
 import ScrubNumber from "@/components/ui/ScrubNumber";
 import {
-  findItem, hasSource, setLayout, updateItem,
+  addAsset, findItem, hasSource, makeId, setLayout, updateItem,
   type AudioItem, type CaptionsItem, type EditorDoc, type EditorItem, type SolidItem,
   type TextItem, type VideoItem,
 } from "@/lib/editor-doc";
@@ -62,10 +62,12 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 export default function EditorInspector({
-  doc, selectedIds, onChange, onEditSnippet,
+  doc, selectedIds, onChange, onEditSnippet, projectId,
 }: {
   doc: EditorDoc;
   selectedIds: Set<string>;
+  /** Needed to bake a colour grade into a copy of a clip's footage. */
+  projectId?: string;
   /** `transient` values come from a drag in progress and must not be recorded for undo. */
   onChange: (next: EditorDoc, opts?: { transient?: boolean }) => void;
   /** Opens the snippet's parameter form, for blocks that came from the library. */
@@ -210,6 +212,15 @@ export default function EditorInspector({
             ))}
           </div>
         </Section>
+      )}
+
+      {item.type === "video" && projectId && (
+        <GradeSection
+          doc={doc}
+          item={item as VideoItem}
+          projectId={projectId}
+          onChange={onChange}
+        />
       )}
 
       {hasSource(item) && (
@@ -361,5 +372,104 @@ export default function EditorInspector({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Colour grade for one clip.
+ *
+ * Applying a look bakes the LUT into a copy of the footage and repoints this
+ * clip at it, keeping the original asset so the look can come back off. That is
+ * why a grade here shows up in the preview and in every export without the
+ * renderer being involved — by then it is simply different footage.
+ */
+function GradeSection({
+  doc, item, projectId, onChange,
+}: {
+  doc: EditorDoc;
+  item: VideoItem;
+  projectId: string;
+  onChange: (next: EditorDoc, opts?: { transient?: boolean }) => void;
+}) {
+  const [luts, setLuts] = React.useState<{ id: string; name: string }[]>([]);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let live = true;
+    fetch("/api/luts")
+      .then((r) => r.json())
+      .then((d) => { if (live) setLuts(d.luts ?? []); })
+      .catch(() => { /* picker just stays empty */ });
+    return () => { live = false; };
+  }, []);
+
+  async function apply(lutId: string) {
+    setError(null);
+    const baseId = item.baseAssetId ?? item.assetId;
+    const base = doc.assets.find((a) => a.id === baseId);
+    if (!base) return;
+
+    if (lutId === "none") {
+      onChange(updateItem<VideoItem>(doc, item.id, { assetId: baseId, lut: undefined, baseAssetId: undefined }));
+      return;
+    }
+
+    setBusy(true);
+    try {
+      // The grade is baked from the file the clip ORIGINALLY used, never from an
+      // already-graded copy — stacking looks would compound them silently.
+      const file = base.src.replace(`/api/media/${projectId}/`, "");
+      const res = await fetch(`/api/media/${projectId}/grade`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file, lut: lutId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Grade failed");
+
+      const existing = doc.assets.find((a) => a.src === data.src);
+      const graded = existing ?? { ...base, id: makeId("asset"), src: data.src, name: `${base.name} · graded` };
+      const withAsset = existing ? doc : addAsset(doc, graded);
+      onChange(updateItem<VideoItem>(withAsset, item.id, {
+        assetId: graded.id,
+        lut: lutId,
+        baseAssetId: baseId,
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Grade failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <div style={{ fontSize: 9, color: "var(--text-3)", marginTop: 4, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+        Colour
+      </div>
+      <div style={row}>
+        <span style={label}>Look</span>
+        <select
+          value={item.lut ?? "none"}
+          disabled={busy}
+          onChange={(e) => apply(e.target.value)}
+          style={{ ...input, cursor: busy ? "wait" : "pointer" }}
+        >
+          <option value="none">None</option>
+          {luts.map((l) => (
+            <option key={l.id} value={l.id}>{l.name}</option>
+          ))}
+        </select>
+      </div>
+      {busy && (
+        <div style={{ fontSize: 10, color: "var(--text-3)", marginBottom: 6 }}>
+          Grading this clip — the footage is re-encoded once, then cached.
+        </div>
+      )}
+      {error && (
+        <div style={{ fontSize: 10, color: "var(--red)", marginBottom: 6 }}>{error}</div>
+      )}
+    </>
   );
 }
