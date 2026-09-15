@@ -70,6 +70,20 @@ const CodeEditor = dynamic(() => import("@/components/CodeEditor"), {
   ),
 });
 
+const SAVE_LABEL = { saved: "SAVED", unsaved: "UNSAVED", saving: "SAVING", error: "UNSAVED" } as const;
+const SAVE_DOT = {
+  saved: "var(--accent)",
+  unsaved: "var(--text-3)",
+  saving: "var(--amber)",
+  error: "var(--red)",
+} as const;
+const SAVE_TITLE = {
+  saved: "All changes saved",
+  unsaved: "Unsaved changes — saving shortly",
+  saving: "Saving…",
+  error: "Could not save — your last change is still only in this tab",
+} as const;
+
 export default function ProjectEditor() {
   const params = useParams();
   const router = useRouter();
@@ -106,6 +120,10 @@ export default function ProjectEditor() {
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef<{ code: string; chatLength: number; annotations: string; styleMode: StyleMode }>({ code: "", chatLength: 0, annotations: "", styleMode: "default" });
+  // Drives the toolbar indicator. The autosave effect below already knows
+  // whether anything differs from what was last written — this just surfaces it
+  // instead of the badge claiming "SAVED" unconditionally.
+  const [saveState, setSaveState] = useState<"saved" | "unsaved" | "saving" | "error">("saved");
   const codeHistory = useCodeHistory();
   // The editor document. When present it is the source of truth for the video
   // and this project opens in the visual editor instead of the code editor.
@@ -354,18 +372,24 @@ export default function ProjectEditor() {
     const hasDocChanged = docKey !== lastSavedDocRef.current;
     if (!hasCodeChanged && !hasChatChanged && !hasAnnotationsChanged && !hasStyleChanged && !hasDocChanged) return;
 
+    setSaveState("unsaved");
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
+      setSaveState("saving");
       try {
-        await fetch(`/api/projects/${projectId}`, {
+        const res = await fetch(`/api/projects/${projectId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ code, chatHistory, styleMode, ...(terminalAnnotations !== undefined ? { terminalAnnotations } : {}), ...(doc ? { doc } : {}) }),
         });
+        if (!res.ok) throw new Error(String(res.status));
         lastSavedRef.current = { code, chatLength: chatHistory.length, annotations: annotationsKey, styleMode };
         lastSavedDocRef.current = docKey;
+        setSaveState("saved");
       } catch {
-        // silent fail
+        // Left visible rather than silent: a save that failed used to still
+        // read as "SAVED", which is the worst possible thing for this badge.
+        setSaveState("error");
       }
     }, 2000);
 
@@ -870,15 +894,17 @@ export default function ProjectEditor() {
           }}
         >
           <span className="mono" style={{ fontSize: 10, color: "var(--text-2)", padding: "0 6px" }}>
-            SAVED
+            {SAVE_LABEL[saveState]}
           </span>
           <span
+            title={SAVE_TITLE[saveState]}
             style={{
               width: 5,
               height: 5,
               borderRadius: "50%",
-              background: "var(--accent)",
+              background: SAVE_DOT[saveState],
               marginRight: 6,
+              animation: saveState === "saving" ? "vt-pulse 1s ease-in-out infinite" : undefined,
             }}
           />
         </div>
