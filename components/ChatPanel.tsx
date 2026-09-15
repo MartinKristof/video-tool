@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } f
 import type { ChatMessage, SvgFile } from "@/lib/types";
 import type { EditorDoc } from "@/lib/editor-doc";
 import Icon from "@/components/ui/Icon";
+import Kbd from "@/components/ui/Kbd";
 import Button from "@/components/ui/Button";
 import IconButton from "@/components/ui/IconButton";
 import { normalizeTapeQuotes } from "@/lib/tape-parser";
@@ -860,26 +861,6 @@ const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function ChatPanel
 
 export default ChatPanel;
 
-function Kbd({ children }: { children: React.ReactNode }) {
-  return (
-    <span
-      className="mono"
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        height: 18,
-        padding: "0 5px",
-        fontSize: 10,
-        color: "var(--text-1)",
-        background: "var(--bg-3)",
-        border: "0.5px solid var(--line-2)",
-        borderRadius: 3,
-      }}
-    >
-      {children}
-    </span>
-  );
-}
 
 function MessageContent({ content }: { content: string }) {
   const parts = content.split(/(```[\s\S]*?```)/g);

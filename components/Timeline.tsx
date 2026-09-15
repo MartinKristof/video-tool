@@ -33,8 +33,7 @@ import { evalSceneCode } from "@/remotion/DynamicScene";
 import type { ResolvedClip } from "@/lib/timeline-extract";
 import Icon from "@/components/ui/Icon";
 import IconButton from "@/components/ui/IconButton";
-import Modal from "@/components/ui/Modal";
-import Kbd from "@/components/ui/Kbd";
+import ShortcutsModal from "@/components/ShortcutsModal";
 
 interface TimelineProps {
   code: string;
@@ -825,7 +824,7 @@ export default function Timeline({
           </button>
           <IconButton icon="zoomIn" size={26} title="Zoom in" onClick={() => setZoom((z) => clampZoom(z * 1.5))} />
         </div>
-        <IconButton icon="info" size={26} title="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)} />
+        <IconButton icon="help" size={26} title="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)} />
       </div>
 
       {/* Scroll area */}
@@ -1021,29 +1020,7 @@ export default function Timeline({
         </>
       )}
 
-      <Modal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Timeline shortcuts" width={460}>
-        <div style={{ padding: "14px 20px 20px", display: "flex", flexDirection: "column", gap: 9 }}>
-          {[
-            ["Play / pause", <Kbd key="sp">Space</Kbd>],
-            ["Move playhead 1 frame", <span key="a" style={{ display: "flex", gap: 4 }}><Kbd>←</Kbd><Kbd>→</Kbd></span>],
-            ["Jump 10 frames", <span key="s" style={{ display: "flex", gap: 4, alignItems: "center" }}><Kbd>Shift</Kbd>+<Kbd>←</Kbd><Kbd>→</Kbd></span>],
-            ["Jump to start / end", <span key="he" style={{ display: "flex", gap: 4 }}><Kbd>Home</Kbd><Kbd>End</Kbd></span>],
-            ["Scrub", <span key="cl" style={{ fontSize: 11, color: "var(--text-2)" }}>click / drag the ruler</span>],
-            ["Zoom", <span key="z" style={{ display: "flex", gap: 4, alignItems: "center" }}><Kbd>⌘</Kbd>+ scroll</span>],
-            ["Split clip at playhead", <Kbd key="sB">S</Kbd>],
-            ["Delete clip + close gap", <span key="d" style={{ display: "flex", gap: 4 }}><Kbd>Delete</Kbd></span>],
-            ["Select multiple clips", <span key="ms" style={{ display: "flex", gap: 4, alignItems: "center" }}><Kbd>Shift</Kbd>/<Kbd>⌘</Kbd>+ click</span>],
-            ["Trim / reorder", <span key="tr" style={{ fontSize: 11, color: "var(--text-2)" }}>drag clip edges / body</span>],
-            ["Split at cursor", <span key="alt" style={{ display: "flex", gap: 4, alignItems: "center" }}><Kbd>Alt</Kbd>+ click clip</span>],
-            ["Deselect", <Kbd key="esc">Esc</Kbd>],
-          ].map(([label, keys], i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-              <span style={{ fontSize: 12, color: "var(--text-1)" }}>{label}</span>
-              {keys}
-            </div>
-          ))}
-        </div>
-      </Modal>
+      <ShortcutsModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} kind="code" />
     </div>
   );
 }

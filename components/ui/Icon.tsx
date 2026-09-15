@@ -38,6 +38,7 @@ const paths: Record<string, React.ReactNode> = {
   check: <path d="M3 8l3 3 7-7" />,
   warn: <g><path d="M8 2l7 12H1z" /><path d="M8 6v4M8 12v.5" /></g>,
   info: <g><circle cx="8" cy="8" r="6" /><path d="M8 5v.5M8 8v4" /></g>,
+  help: <g><circle cx="8" cy="8" r="6" /><path d="M6.3 6.3a1.75 1.75 0 1 1 1.7 2.1v.8M8 11.4v.4" /></g>,
   layers: <g><path d="M8 2l6 3-6 3-6-3z" /><path d="M2 8l6 3 6-3M2 11l6 3 6-3" /></g>,
   aspect: <g><rect x="2" y="4" width="12" height="8" rx="1" /><path d="M6 4v8M10 4v8" /></g>,
   maximize: <path d="M3 6V3h3M10 3h3v3M13 10v3h-3M6 13H3v-3" />,

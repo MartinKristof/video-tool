@@ -519,6 +519,14 @@ export default function Home() {
           gap: 20,
         }}
       >
+        {/* Only the dashed tile shows on a fresh install, which says nothing about
+            how to start — and ⌘N was documented nowhere in the app. */}
+        {filtered.length === 0 && (
+          <div style={{ gridColumn: "1 / -1", fontSize: 13, color: "var(--text-2)", marginBottom: -4 }}>
+            No {meta.label.toLowerCase()} projects yet. Start one below, or press{" "}
+            <span className="mono" style={{ color: "var(--text-1)" }}>⌘N</span>.
+          </div>
+        )}
         {filtered.map((project) => (
           <ProjectCard
             key={project.id}
