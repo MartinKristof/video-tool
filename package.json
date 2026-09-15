@@ -1,13 +1,18 @@
 {
   "name": "video-tool",
-  "version": "0.1.65",
+  "version": "0.1.66",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "studio": "npx remotion studio remotion/index.tsx"
+    "studio": "npx remotion studio remotion/index.tsx",
+    "test": "npm run test:doc && npm run test:agent && npm run test:timeline",
+    "test:doc": "tsx scripts/test-editor-doc.ts",
+    "test:agent": "tsx scripts/test-editor-agent.ts",
+    "test:timeline": "tsx scripts/test-timeline-emitter.ts",
+    "test:render": "tsx scripts/test-editor-render.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",
@@ -43,6 +48,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",
+    "tsx": "^4.23.13",
     "typescript": "^5"
   }
 }

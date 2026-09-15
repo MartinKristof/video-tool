@@ -1,36 +1,52 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# video-tool
 
-## Getting Started
+A local tool for making short branded videos. You describe a scene, an AI writes it
+as a [Remotion](https://remotion.dev) composition, and you preview, edit and export it
+without leaving the app. Uploaded footage can be transcribed, trimmed and recut on a
+timeline; a library of branded scenes can be dropped in as blocks.
 
-First, run the development server:
+Everything runs on your own machine — projects, media and renders all live in `data/`.
+
+## Running it
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev          # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Needs `ffmpeg` and `ffprobe` on PATH. Transcription and auto-reframe additionally want
+a local Whisper install and OpenCV; both degrade gracefully when missing.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+API keys go in `.env.local` (not committed).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Tests
 
-## Learn More
+```bash
+npm test             # document model, AI tool layer, timeline emitter (~2,100 assertions)
+npm run test:render  # slow: real Remotion bundle + renderStill gate
+```
 
-To learn more about Next.js, take a look at the following resources:
+`npm test` is the one to run before committing. `test:render` boots a real bundle and
+takes tens of seconds, so it is a gate rather than something to run on every change.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Other commands
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm run build        # production build (also the type-check gate)
+npm run lint
+npm run studio       # Remotion Studio on the registered compositions
+```
 
-## Deploy on Vercel
+## Layout
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Path | What lives there |
+|---|---|
+| `app/` | Next routes — `/` (project picker) and `/project/[id]` (the editor), plus the API |
+| `components/` | UI. `ui/` holds the shared primitives |
+| `lib/` | The real logic: document model, timeline parsing/editing, prompts, render queue |
+| `remotion/` | Compositions and the scene runtime |
+| `scripts/` | Test suites and one-off build/export scripts |
+| `data/` | Project data — generated scenes, media, renders. Not source; excluded from type-checking |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+`data/**/scene.tsx` files are written by the AI and evaluated at runtime, so they are
+deliberately outside the TypeScript program — see the notes in `tsconfig.json`.
