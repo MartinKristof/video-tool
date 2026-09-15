@@ -1,16 +1,13 @@
 import type { EditorDoc } from "./editor-doc";
 
 export type AnimationType = "broll" | "animation" | "svg" | "video" | "terminal";
-// Rendering engine for a project. Remotion (React/`useCurrentFrame`) is the
-// The rendering engine a project is authored for. Only Remotion now — the
+// The rendering engine a project is authored for. Only Remotion now. The
 // HyperFrames (HTML + GSAP) authoring path was removed in v0.1.53 after three
-// months in which it produced two projects, one of them a test. The field is
-// kept rather than dropped so stored projects still parse; a couple of them say
+// months in which it produced two projects, one of them a test; its renderer
+// and the /design-export page built on it went in v0.1.63. The field is kept
+// rather than dropped so stored projects still parse — two of them say
 // "hyperframes" and will simply fail to compile as a Remotion scene, which
 // reports as a scene error rather than anything worse.
-//
-// The HyperFrames RENDERER (lib/hyperframes/, lib/hyperframes-queue.ts) lives on
-// because /design-export is built on it; nothing authors against it any more.
 export type Engine = "remotion";
 export type StyleMode = "default" | "kinetic" | "editorial" | "cinematic";
 // Video projects only: how per-topic labels are shown when cutting an interview.
