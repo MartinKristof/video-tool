@@ -864,3 +864,26 @@ export function trackWithRoomAt(
   const grown = addTrack(doc);
   return { doc: grown, trackId: grown.tracks[grown.tracks.length - 1].id };
 }
+
+/**
+ * Nearest target within a threshold, or the frame unchanged.
+ *
+ * Moved here from the retired code timeline, which is where it used to live —
+ * the visual timeline was the only thing still calling it.
+ */
+export function snapFrame(
+  frame: number,
+  targets: number[],
+  threshold: number,
+): { frame: number; snapped: number | null } {
+  let best: number | null = null;
+  let bestDist = threshold + 1;
+  for (const tg of targets) {
+    const d = Math.abs(tg - frame);
+    if (d <= threshold && d < bestDist) {
+      best = tg;
+      bestDist = d;
+    }
+  }
+  return best != null ? { frame: best, snapped: best } : { frame, snapped: null };
+}

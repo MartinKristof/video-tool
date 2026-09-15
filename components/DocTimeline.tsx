@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Icon from "@/components/ui/Icon";
 import IconButton from "@/components/ui/IconButton";
 import ShortcutsModal from "@/components/ShortcutsModal";
-import { snapFrame } from "@/lib/editable-timeline";
+import { snapFrame } from "@/lib/editor-doc";
 import type { AnimationPreset } from "@/lib/editor-effects";
 import {
   addItem, addTrack, cloneItem, docDuration, duplicateItem, findItem, getAsset, hasRoomAt,

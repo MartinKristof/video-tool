@@ -14,7 +14,6 @@ import FirstPassProgress, { type FirstPassState } from "@/components/FirstPassPr
 import ExportDialog from "@/components/ExportDialog";
 import TerminalPreview from "@/components/TerminalPreview";
 import ConvertAspectRatioButton from "@/components/ConvertAspectRatioButton";
-import Timeline from "@/components/Timeline";
 import { evalSceneCode } from "@/remotion/DynamicScene";
 import { sceneFramesAtFps } from "@/lib/scene-eval";
 import type { Project, ChatMessage, TerminalAnnotations, StyleMode, TopicCardStyle, TransitionStyle } from "@/lib/types";
@@ -34,7 +33,6 @@ import { addItem, addTrack, docDuration, docFromScene, emptyDoc, findItem, fitSc
 import { docFromComposition, docFromCutPlan, docFromVideoEdit, suspiciousSegments } from "@/lib/editor-import";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import type { PlayerRef } from "@remotion/player";
-import type { ResolvedClip } from "@/lib/timeline-extract";
 
 const EditorPreview = dynamic(() => import("@/components/EditorPreview"), {
   ssr: false,
@@ -61,7 +59,6 @@ const PreviewPanel = dynamic(() => import("@/components/PreviewPanel"), {
 });
 
 
-const TimelineExtractor = dynamic(() => import("@/components/TimelineExtractor"), { ssr: false });
 
 const CodeEditor = dynamic(() => import("@/components/CodeEditor"), {
   ssr: false,
@@ -155,18 +152,6 @@ export default function ProjectEditor() {
   const playerRef = useRef<PlayerRef | null>(null);
   const [currentFrame, setCurrentFrame] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  // Native fps + source frame count per media src, so timeline trims convert
-  // composition↔source frames and clamp to the footage's real length.
-  const [nativeFpsBySrc, setNativeFpsBySrc] = useState<Record<string, number>>({});
-  const [maxSrcFrameBySrc, setMaxSrcFrameBySrc] = useState<Record<string, number>>({});
-  // Runtime-extracted clip layout (display-only) for compositions the static
-  // parsers can't fully see (TransitionSeries, crossfade/data-driven).
-  const [resolvedClips, setResolvedClips] = useState<ResolvedClip[] | null>(null);
-  // Which model the timeline mapped the composition with; gates the extractor.
-  const [timelineMode, setTimelineMode] = useState<"doc" | "data" | "segment" | "none">("none");
-  const handleResolved = useCallback((rt: { clips: ResolvedClip[] } | null) => {
-    setResolvedClips(rt?.clips ?? null);
-  }, []);
 
   // Load project
   useEffect(() => {
@@ -601,31 +586,6 @@ export default function ProjectEditor() {
     return () => { cancelled = true; };
   }, [doc, projectId]);
 
-  // Fetch native fps per media file (cache-only) for correct trim math on video projects.
-  useEffect(() => {
-    if (project?.animationType !== "video") return;
-    let cancelled = false;
-    fetch(`/api/media/${projectId}/probe-map`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (cancelled || !data?.fps) return;
-        const fpsMap: Record<string, number> = {};
-        for (const [rel, f] of Object.entries(data.fps as Record<string, number>)) {
-          fpsMap[`/api/media/${projectId}/${rel}`] = f;
-        }
-        setNativeFpsBySrc(fpsMap);
-        const nbMap: Record<string, number> = {};
-        for (const [rel, n] of Object.entries((data.nbFrames ?? {}) as Record<string, number>)) {
-          nbMap[`/api/media/${projectId}/${rel}`] = n;
-        }
-        setMaxSrcFrameBySrc(nbMap);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, project?.animationType]);
-
   const handleCodeChange = useCallback((newCode: string) => {
     setCode(newCode);
   }, []);
@@ -879,24 +839,9 @@ export default function ProjectEditor() {
   // can be reordered, trimmed, and split via the editable timeline.
   // The editable timeline parses Remotion <Sequence> blocks — it doesn't apply
   // to scenes with no Sequence model.
-  // The visual editor always has a timeline; otherwise it depends on the type.
-  const hasTimeline =
-    Boolean(docView) ||
-    (project.animationType === "video" ||
-      project.animationType === "animation" ||
-      project.animationType === "broll" ||
-      project.animationType === "svg");
-  // Only run the (browser-side) runtime extractor when the static parsers likely
-  // can't see the clips: runtime-computed layouts (TransitionSeries, .map, Series).
-  //
-  // AND only while the timeline actually has nothing else to draw. The extractor
-  // is a second hidden <Player> rendering the whole composition, so on a long
-  // 4K interview edit it decodes the same footage twice over. Its output feeds
-  // the display-only lane and nothing else — doc, data and segment modes all
-  // position clips statically — so for those it is pure cost.
-  const mayNeedExtraction =
-    hasTimeline && /(<TransitionSeries\b|\.map\s*\(|<Series\.Sequence\b)/.test(code);
-  const needsExtraction = mayNeedExtraction && timelineMode === "none";
+  // There is one timeline now, and it draws a document. A code project reaches it
+  // by importing — "Open in editor" — rather than by being parsed in place.
+  const hasTimeline = Boolean(docView);
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -1240,7 +1185,7 @@ export default function ProjectEditor() {
                   <Separator className="resize-handle resize-handle-horizontal" />
                   <Panel id="timeline" defaultSize="30%" minSize="12%">
                     <div style={{ background: "var(--bg-2)", height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
-                      {docView ? (
+                      {docView && (
                       <DocTimeline
                         doc={docView}
                         onChange={commitDoc}
@@ -1254,23 +1199,6 @@ export default function ProjectEditor() {
                         selectedIds={selectedItemIds}
                         onSelectionChange={setSelectedItemIds}
                         onPromptAnimation={() => setPromptAnimOpen(true)}
-                      />
-                      ) : (
-                      <Timeline
-                        code={code}
-                        fps={extractedFps}
-                        durationInFrames={durationInFrames}
-                        onCodeChange={commitComposition}
-                        onEditModeChange={setTimelineMode}
-                        nativeFpsBySrc={nativeFpsBySrc}
-                        maxSrcFrameBySrc={maxSrcFrameBySrc}
-                        resolvedClips={needsExtraction ? resolvedClips : null}
-                        extracting={needsExtraction}
-                        currentFrame={currentFrame}
-                        onSeek={seekTo}
-                        onScrubStart={handleScrubStart}
-                        onTogglePlay={togglePlay}
-                        isPlaying={isPlaying}
                       />
                       )}
                     </div>
@@ -1417,17 +1345,6 @@ export default function ProjectEditor() {
           </Panel>
         </Group>
       </div>
-
-      {needsExtraction && !isTerminalProject && (
-        <TimelineExtractor
-          code={code}
-          width={width}
-          height={height}
-          fps={extractedFps}
-          durationInFrames={durationInFrames}
-          onResolved={handleResolved}
-        />
-      )}
 
       {docView && (
         <SnippetEditDialog

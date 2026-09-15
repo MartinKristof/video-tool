@@ -1,6 +1,6 @@
 {
   "name": "video-tool",
-  "version": "0.1.75",
+  "version": "0.1.76",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -8,10 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "studio": "npx remotion studio remotion/index.tsx",
-    "test": "npm run test:doc && npm run test:agent && npm run test:timeline",
+    "test": "npm run test:doc && npm run test:agent",
     "test:doc": "tsx scripts/test-editor-doc.ts",
     "test:agent": "tsx scripts/test-editor-agent.ts",
-    "test:timeline": "tsx scripts/test-timeline-emitter.ts",
     "test:render": "tsx scripts/test-editor-render.ts"
   },
   "dependencies": {
