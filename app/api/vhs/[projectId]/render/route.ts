@@ -7,6 +7,13 @@ import { normalizeTapeQuotes } from "@/lib/tape-parser";
 
 const PROJECTS_DIR = path.join(process.cwd(), "data", "projects");
 
+// `||` and not `??`: copying .env.example leaves VHS_BIN an empty string, which
+// spawn rejects synchronously. Prefer the pinned 0.11.0 that postinstall puts in
+// .tools over whatever is on PATH, since Homebrew's 0.12.0 never encodes.
+const PINNED_VHS = path.join(process.cwd(), ".tools", process.platform === "win32" ? "vhs.exe" : "vhs");
+const VHS_BIN =
+  process.env.VHS_BIN || (fs.existsSync(PINNED_VHS) ? PINNED_VHS : "vhs");
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
@@ -39,7 +46,7 @@ export async function POST(
   fs.writeFileSync(tapePath, wrappedTape, "utf-8");
 
   return await new Promise<Response>((resolve) => {
-    const proc = spawn("vhs", [tapePath], { cwd: projectDir });
+    const proc = spawn(VHS_BIN, [tapePath], { cwd: projectDir });
     let stderr = "";
     let stdout = "";
 
@@ -55,7 +62,7 @@ export async function POST(
         NextResponse.json(
           {
             ok: false,
-            error: `Failed to spawn vhs: ${err.message}. Is vhs installed? (brew install vhs ttyd ffmpeg)`,
+            error: `Failed to spawn ${VHS_BIN}: ${err.message}. Is vhs installed? (brew install vhs ttyd ffmpeg)`,
           },
           { status: 500 }
         )
@@ -64,12 +71,14 @@ export async function POST(
 
     proc.on("close", async (code) => {
       if (code !== 0 || !fs.existsSync(outPath)) {
-        resolve(
-          NextResponse.json(
-            { ok: false, error: stderr || stdout || `vhs exited with code ${code}` },
-            { status: 500 }
-          )
-        );
+        // VHS 0.12.0 skips the ffmpeg encode yet still exits 0, so a clean exit
+        // with no file has to be reported separately or the user only sees VHS's
+        // ordinary progress output as the "error".
+        const error =
+          code === 0
+            ? `vhs finished without writing out.mp4. Known VHS 0.12.0 regression (charmbracelet/vhs#787): the encode step never runs. Install vhs 0.11.0 and point VHS_BIN at it.\n\n${stdout}${stderr}`
+            : stderr || stdout || `vhs exited with code ${code}`;
+        resolve(NextResponse.json({ ok: false, error }, { status: 500 }));
         return;
       }
       const stat = fs.statSync(outPath);

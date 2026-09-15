@@ -11,7 +11,8 @@
     "test": "npm run test:doc && npm run test:agent",
     "test:doc": "tsx scripts/test-editor-doc.ts",
     "test:agent": "tsx scripts/test-editor-agent.ts",
-    "test:render": "tsx scripts/test-editor-render.ts"
+    "test:render": "tsx scripts/test-editor-render.ts",
+    "postinstall": "node scripts/install-vhs.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",
