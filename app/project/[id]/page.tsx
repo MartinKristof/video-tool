@@ -31,7 +31,7 @@ import Segmented from "@/components/ui/Segmented";
 import { useCodeHistory } from "@/hooks/useCodeHistory";
 import { useDocHistory } from "@/hooks/useDocHistory";
 import { addItem, addTrack, docDuration, docFromScene, emptyDoc, findItem, fitSceneItem, fullFrameLayout, makeId, retimeSceneCode, trackWithRoomAt, updateItem, type EditorDoc, type SceneItem } from "@/lib/editor-doc";
-import { docFromCutPlan, docFromVideoEdit, suspiciousSegments } from "@/lib/editor-import";
+import { docFromComposition, docFromCutPlan, docFromVideoEdit, suspiciousSegments } from "@/lib/editor-import";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import type { PlayerRef } from "@remotion/player";
 import type { ResolvedClip } from "@/lib/timeline-extract";
@@ -1129,6 +1129,18 @@ export default function ProjectEditor() {
                 }
                 return;
               }
+              // No footage, but the animation still has cuts: a TransitionSeries
+              // of branded scenes, or a few Sequences. Each cut becomes a block
+              // windowed onto the original, so the design and motion are exactly
+              // as authored and only the arrangement becomes editable.
+              const asBlocks = docFromComposition(code, size, evaluated?.durationInFrames ?? 0);
+              if (asBlocks) {
+                commitDoc(asBlocks);
+                return;
+              }
+
+              // Nothing to cut on — a continuous move, say. One block is then the
+              // honest answer, not a failure.
               commitDoc(docFromScene(size, code, evaluated?.durationInFrames ?? 250, project.name));
             }}
           >

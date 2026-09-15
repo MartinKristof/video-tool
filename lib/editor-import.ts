@@ -1,4 +1,5 @@
 import { parseDataTimeline, parseSegments } from "./data-timeline";
+import { normalizeSeriesToSequences, parseSequenceBlocks, parseTransitionSeries } from "./timeline-parser";
 import type { CutPlan } from "./cut-plan";
 import {
   emptyDoc, fullFrameLayout, makeId,
@@ -22,8 +23,19 @@ function findSource(code: string): string | null {
  * stretch of it. This is how branded animated title cards survive the import:
  * the whole generated scene is embedded and windowed, so nothing has to be
  * parsed out of it and nothing is redrawn by hand.
+ *
+ * `offset` is which frame of the embedded composition the block opens on. It is
+ * separate from `from` because the two only coincide when the blocks tile the
+ * composition from frame zero — true for a whole-composition import, not true in
+ * general.
  */
-function cardBlock(code: string, size: DocSize, from: number, durationInFrames: number): SceneItem {
+export function windowedSceneItem(
+  code: string,
+  size: DocSize,
+  from: number,
+  durationInFrames: number,
+  offset: number,
+): SceneItem {
   return {
     type: "scene",
     id: makeId("card"),
@@ -31,8 +43,13 @@ function cardBlock(code: string, size: DocSize, from: number, durationInFrames: 
     durationInFrames: Math.max(1, durationInFrames),
     layout: fullFrameLayout(size),
     code,
-    sourceOffsetFrames: from,
+    sourceOffsetFrames: Math.max(0, offset),
   };
+}
+
+/** A card in an interview edit: tiled from zero, so its window is its position. */
+function cardBlock(code: string, size: DocSize, from: number, durationInFrames: number): SceneItem {
+  return windowedSceneItem(code, size, from, durationInFrames, from);
 }
 
 function footageBlock(
@@ -205,6 +222,136 @@ function buildFromSegments(
     cursor += answerFrames[i];
   });
   return items;
+}
+
+/** One block's stretch of the composition, in composition frames. */
+export interface CompositionSpan {
+  from: number;
+  durationInFrames: number;
+}
+
+/**
+ * Where an animation's cuts fall.
+ *
+ * The old code timeline had to be strict about this, because it REWROTE the
+ * composition and a bad read corrupted the file. Windowing has no such risk —
+ * every block embeds the whole composition and shows its own stretch — so this
+ * only has to know where the cuts are, which is why it reaches compositions the
+ * old parser refused to edit.
+ *
+ * Returns null when nothing usable is found, so the caller falls back to
+ * embedding the composition whole.
+ */
+export function compositionSpans(
+  code: string,
+  fps: number,
+  exportedDurationInFrames: number,
+): CompositionSpan[] | null {
+  if (!code?.trim() || !(exportedDurationInFrames > 0)) return null;
+
+  // TransitionSeries first: it is the only parser whose positions already account
+  // for the overlap a crossfade steals from the preceding slot.
+  const ts = parseTransitionSeries(code, fps);
+  let starts: number[] | null = null;
+  let contentEnd = 0;
+
+  if (ts && ts.children.length > 0) {
+    starts = ts.children.map((c) => c.from);
+    contentEnd = ts.totalDurationInFrames;
+  } else {
+    // A <Series> lays its children out implicitly; flattening gives them the
+    // explicit positions this needs. Only the POSITIONS come from the flattened
+    // source — the blocks still embed the original, unflattened composition.
+    const flat = normalizeSeriesToSequences(code, fps) ?? code;
+    const blocks = parseSequenceBlocks(flat, fps);
+    if (blocks.length > 0) {
+      starts = blocks.map((b) => b.from);
+      contentEnd = Math.max(...blocks.map((b) => b.from + b.durationInFrames));
+    }
+  }
+  // Deliberately NOT parseTimeline: it drops a TransitionSeries.Sequence whose
+  // body is a bare <HeroScene />, because it insists on finding markup inside.
+  if (!starts || starts.length === 0) return null;
+
+  // Roughly half of these compositions declare a durationInFrames shorter than
+  // their own content, because the export miscounts the transition overlaps —
+  // which means their last scene never plays. Cover the real content rather
+  // than reproducing that: a scene you cannot see is a scene you cannot fix.
+  const end = Math.max(exportedDurationInFrames, contentEnd);
+  const spans = spansFromStarts(starts, end);
+  // One span is just the whole composition — that is docFromScene's job, and
+  // saying so here keeps the caller's fallback meaningful.
+  return spans.length >= 2 ? spans : null;
+}
+
+/**
+ * Turn clip start frames into blocks that tile the composition exactly.
+ *
+ * Parsed clips OVERLAP wherever there is a crossfade, but a track may not hold
+ * overlapping items — `isValidDoc` rejects it and `addItem` would silently shunt
+ * the later one along, quietly wrecking the timing. So the starts become cut
+ * points and each block runs to the next one. Nothing is lost: the blended
+ * frames still live inside whichever window covers them, because every window
+ * renders the whole composition.
+ *
+ * Anchored on the composition's EXPORTED duration, which is what the player and
+ * the renderer use. The parsers' own total disagrees with it on most projects —
+ * the export usually miscounts its overlaps — and trusting the parser instead
+ * would cut the tail off or pad it with black.
+ */
+function spansFromStarts(starts: number[], exportedDurationInFrames: number): CompositionSpan[] {
+  const points = [...new Set(starts.map((n) => Math.max(0, Math.round(n))))]
+    .filter((n) => n < exportedDurationInFrames)
+    .sort((a, b) => a - b);
+  // Anything before the first cut is its own block, so a composition that opens
+  // outside its series keeps its head.
+  if (points[0] !== 0) points.unshift(0);
+
+  const spans: CompositionSpan[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const from = points[i];
+    const end = i + 1 < points.length ? points[i + 1] : exportedDurationInFrames;
+    if (end - from >= 1) spans.push({ from, durationInFrames: end - from });
+  }
+  // The last block always runs to the exported end, even if rounding lost a frame.
+  const last = spans[spans.length - 1];
+  if (last) last.durationInFrames = Math.max(1, exportedDurationInFrames - last.from);
+  return spans;
+}
+
+/**
+ * Open ANY composition as editable blocks.
+ *
+ * `docFromVideoEdit` recovers an interview cut and needs a video file to do it;
+ * this is the animation case, where there is no footage at all — a TransitionSeries
+ * of branded scenes, or a handful of Sequences. Each cut becomes a block you can
+ * move, trim, split and layer, and every block still renders the original
+ * composition, so nothing is parsed out and nothing is redrawn.
+ *
+ * Returns null when the composition has no cuts to find — a continuous scroll,
+ * say — in which case one block IS the honest representation and the caller
+ * falls back to `docFromScene`.
+ */
+export function docFromComposition(
+  code: string,
+  size: DocSize,
+  exportedDurationInFrames: number,
+): EditorDoc | null {
+  const spans = compositionSpans(code, size.fps, exportedDurationInFrames);
+  if (!spans) return null;
+
+  const base = emptyDoc(size);
+  return {
+    ...base,
+    tracks: [
+      {
+        id: makeId("track"),
+        name: "Scenes",
+        // Tiled from frame zero, so each block's window offset IS its position.
+        items: spans.map((s) => windowedSceneItem(code, size, s.from, s.durationInFrames, s.from)),
+      },
+    ],
+  };
 }
 
 /**

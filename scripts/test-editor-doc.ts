@@ -10,13 +10,14 @@
  */
 import fs from "fs";
 import path from "path";
-import { docFromCutPlan, docFromVideoEdit, suspiciousSegments } from "../lib/editor-import";
+import { compositionSpans, docFromComposition, docFromCutPlan, docFromVideoEdit, suspiciousSegments, windowedSceneItem } from "../lib/editor-import";
 import { planCuts, DEFAULT_THRESHOLDS } from "../lib/cut-plan";
 import type { Transcript } from "../lib/transcribe";
 import { ANIMATION_PRESETS, animationFrames, presetStyle, presetsFor, visibleCharacters, wordProgress } from "../lib/editor-effects";
 import { scrubValue } from "../components/ui/ScrubNumber";
 import { timecode } from "../components/EditorPlayerControls";
 import { evalSceneCode } from "../remotion/DynamicScene";
+import { sceneMeta } from "../lib/scene-eval";
 import {
   addAsset, addItem, addTrack, docDuration, emptyDoc, findItem, isValidDoc,
   makeId, moveItem, removeItem, reorderTrack, rippleRemoveItem, setLayout,
@@ -719,6 +720,130 @@ head("Smart trim keeps words that only sometimes are filler");
   a(DEFAULT_THRESHOLDS.maxGapSeconds >= 0.8, "ordinary breath pauses survive");
   a(DEFAULT_THRESHOLDS.paddingSeconds >= 0.1, "cuts leave room around the consonant");
   a(!DEFAULT_THRESHOLDS.fillers.includes("like"), "'like' is no longer an always-drop");
+}
+
+
+head("an animation's cuts become blocks that tile it exactly");
+{
+  // Three 100-frame scenes with two 20-frame crossfades: 300 - 40 = 260.
+  const CROSSFADED = [
+    'import { TransitionSeries, linearTiming } from "@remotion/transitions";',
+    'import { fade } from "@remotion/transitions/fade";',
+    'import { AbsoluteFill } from "remotion";',
+    "export const fps = 30;",
+    "export const durationInFrames = 260;",
+    "const A = 100; const B = 100; const C = 100; const T = 20;",
+    "export default function S() { return (",
+    "  <TransitionSeries>",
+    "    <TransitionSeries.Sequence durationInFrames={A}><AbsoluteFill /></TransitionSeries.Sequence>",
+    "    <TransitionSeries.Transition presentation={fade()} timing={linearTiming({ durationInFrames: T })} />",
+    "    <TransitionSeries.Sequence durationInFrames={B}><AbsoluteFill /></TransitionSeries.Sequence>",
+    "    <TransitionSeries.Transition presentation={fade()} timing={linearTiming({ durationInFrames: T })} />",
+    "    <TransitionSeries.Sequence durationInFrames={C}><AbsoluteFill /></TransitionSeries.Sequence>",
+    "  </TransitionSeries>",
+    "); }",
+  ].join("\n");
+
+  const spans = compositionSpans(CROSSFADED, 30, 260)!;
+  a(spans !== null && spans.length === 3, `three cuts (got ${spans?.length})`);
+  a(spans[0].from === 0, "the first block opens the composition");
+  // Parsed clips OVERLAP by the transition; the blocks must not.
+  for (let i = 1; i < spans.length; i++) {
+    a(spans[i].from === spans[i - 1].from + spans[i - 1].durationInFrames,
+      `block ${i} starts exactly where block ${i - 1} ends`);
+  }
+  const end = spans[spans.length - 1].from + spans[spans.length - 1].durationInFrames;
+  a(end === 260, `the blocks end on the composition's exported length (got ${end})`);
+
+  // Roughly half of these compositions declare a length shorter than their own
+  // content, because the export miscounts the overlaps — so their last scene
+  // never plays. The import covers the real content instead of reproducing that.
+  const short = compositionSpans(CROSSFADED, 30, 200)!;
+  const shortEnd = short[short.length - 1].from + short[short.length - 1].durationInFrames;
+  a(shortEnd === 260, `a truncating export does not cost a scene (got ${shortEnd})`);
+  a(short.length === 3, "all three scenes survive a short exported duration");
+  a(short.every((x) => x.durationInFrames >= 1), "no zero-length block survives the clamp");
+
+  // A longer declared duration is honoured, so trailing hold isn't cut off.
+  const long = compositionSpans(CROSSFADED, 30, 400)!;
+  const longEnd = long[long.length - 1].from + long[long.length - 1].durationInFrames;
+  a(longEnd === 400, "a longer exported duration keeps its tail");
+
+  const doc = docFromComposition(CROSSFADED, SIZE, 260)!;
+  a(doc !== null, "it imports");
+  a(isValidDoc(doc), "and the document is valid — no overlap, which addItem would have hidden");
+  a(doc.assets.length === 0, "an animation import needs no assets");
+  const items = doc.tracks[0].items as SceneItem[];
+  a(items.length === 3 && items.every((i) => i.type === "scene"), "every block is a scene");
+  a(items.every((i) => i.code === CROSSFADED), "each one embeds the WHOLE composition");
+  a(items.every((i) => i.sourceOffsetFrames === i.from),
+    "tiled from zero, so each window offset is its own position");
+  a(items.every((i) => sceneFit(i) === "window"),
+    "they window rather than retime — the authored timing is the point");
+}
+
+head("compositions with nothing to cut on stay whole");
+{
+  const CONTINUOUS = [
+    'import { AbsoluteFill, interpolate, useCurrentFrame } from "remotion";',
+    "export const fps = 30;",
+    "export const durationInFrames = 450;",
+    "export default function S() {",
+    "  const f = useCurrentFrame();",
+    "  const y = interpolate(f, [0, 450], [0, -2000]);",
+    "  return <AbsoluteFill style={{ transform: `translateY(${y}px)` }} />;",
+    "}",
+  ].join("\n");
+  a(compositionSpans(CONTINUOUS, 30, 450) === null,
+    "a continuous move has no cuts, so one block is the honest answer");
+  a(docFromComposition(CONTINUOUS, SIZE, 450) === null, "and the importer defers to docFromScene");
+  a(compositionSpans("", 30, 100) === null, "empty code imports nothing");
+  a(compositionSpans("export const durationInFrames = 0;", 30, 0) === null, "a zero-length composition imports nothing");
+}
+
+head("a window's offset is independent of where the block sits");
+{
+  const item = windowedSceneItem("code", SIZE, 500, 120, 40);
+  a(item.from === 500 && item.durationInFrames === 120, "position and length are its own");
+  a(item.sourceOffsetFrames === 40, "the window opens on frame 40 of what it embeds");
+  a(windowedSceneItem("code", SIZE, 0, 10, -5).sourceOffsetFrames === 0, "a negative offset clamps to the start");
+}
+
+head("every real composition that imports, tiles");
+{
+  const root = path.join(__dirname, "..", "data", "projects");
+  let checked = 0, imported = 0;
+  for (const dir of fs.readdirSync(root)) {
+    const file = path.join(root, dir, "project.json");
+    if (!fs.existsSync(file)) continue;
+    let p: { code?: string; settings?: { fps?: number } };
+    try { p = JSON.parse(fs.readFileSync(file, "utf8")); } catch { continue; }
+    const code = p.code ?? "";
+    if (!code.trim()) continue;
+    const fps = p.settings?.fps ?? 30;
+    const meta = sceneMeta(code, fps);
+    const total = meta.durationInFrames;
+    checked++;
+
+    const doc = docFromComposition(code, { width: 1920, height: 1080, fps }, total);
+    if (!doc) continue;
+    imported++;
+    const items = doc.tracks[0].items;
+    a(isValidDoc(doc), `${dir}: imports to a valid document`);
+    a(items[0].from === 0, `${dir}: starts at frame 0`);
+    for (let i = 1; i < items.length; i++) {
+      if (items[i].from !== items[i - 1].from + items[i - 1].durationInFrames) {
+        a(false, `${dir}: block ${i} leaves a gap or overlaps`);
+        break;
+      }
+    }
+    const last = items[items.length - 1];
+    const covered = last.from + last.durationInFrames;
+    a(covered >= total,
+      `${dir}: blocks cover at least the declared length (${covered} vs ${total})`);
+  }
+  console.log(`      ${imported} of ${checked} compositions import as blocks`);
+  a(imported > 0, "the corpus actually exercises this");
 }
 
 
