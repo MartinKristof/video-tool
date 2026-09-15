@@ -85,8 +85,9 @@ const HexFrance: React.FC<{
   );
 };
 
-// Animated count-up, eased by a LIQUID spring.
-function useCount(frame: number, vfps: number, target: number, delay: number) {
+// Animated count-up, eased by a LIQUID spring. Not a hook: `spring` is a pure
+// frame-to-value computation, and the use* name tripped rules-of-hooks.
+function countUp(frame: number, vfps: number, target: number, delay: number) {
   const p = spring({ frame, fps: vfps, delay, config: SPRINGS.LIQUID });
   return Math.round(interpolate(p, [0, 1], [0, target]));
 }
@@ -134,6 +135,31 @@ const Chip: React.FC<{ label: string; active?: boolean; style?: React.CSSPropert
   </div>
 );
 
+const Tag: React.FC<{ value: string; p: number; tilt: number; base: number }> = ({
+  value,
+  p,
+  tilt,
+  base,
+}) => (
+  <div
+    style={{
+      background: C.card,
+      border: `${Math.max(2, base * 0.0025)}px solid ${C.border}`,
+      borderRadius: base * 0.02,
+      padding: `${base * 0.018}px ${base * 0.032}px`,
+      fontFamily: F.marketing,
+      fontWeight: 700,
+      fontSize: base * 0.072,
+      color: C.text,
+      fontVariantNumeric: "tabular-nums",
+      opacity: p,
+      transform: `translateY(${interpolate(p, [0, 1], [40, 0])}px) rotate(${interpolate(p, [0, 1], [tilt * 2, tilt])}deg)`,
+    }}
+  >
+    {value}
+  </div>
+);
+
 // ---------------------------------------------------------------------------
 // Scene 1 — HOOK: same bread, wildly different price.
 // ---------------------------------------------------------------------------
@@ -147,26 +173,6 @@ const SceneHook: React.FC = () => {
   const rightTag = springIn(frame, vfps, TIMING.entrance + 26, "ELASTIC");
   const titleIn = springIn(frame, vfps, TIMING.entrance + 40, "SNAPPY");
   const driftY = ambientDrift(frame, 4, 90, "bag");
-
-  const Tag: React.FC<{ value: string; p: number; tilt: number }> = ({ value, p, tilt }) => (
-    <div
-      style={{
-        background: C.card,
-        border: `${Math.max(2, base * 0.0025)}px solid ${C.border}`,
-        borderRadius: base * 0.02,
-        padding: `${base * 0.018}px ${base * 0.032}px`,
-        fontFamily: F.marketing,
-        fontWeight: 700,
-        fontSize: base * 0.072,
-        color: C.text,
-        fontVariantNumeric: "tabular-nums",
-        opacity: p,
-        transform: `translateY(${interpolate(p, [0, 1], [40, 0])}px) rotate(${interpolate(p, [0, 1], [tilt * 2, tilt])}deg)`,
-      }}
-    >
-      {value}
-    </div>
-  );
 
   return (
     <AbsoluteFill style={{ background: C.bg }}>
@@ -190,11 +196,11 @@ const SceneHook: React.FC = () => {
             transform: `translateY(${driftY}px)`,
           }}
         >
-          <Tag value="€0.80" p={leftTag} tilt={-7} />
+          <Tag value="€0.80" p={leftTag} tilt={-7} base={base} />
           <div style={{ opacity: bagIn, transform: `scale(${interpolate(bagIn, [0, 1], [0.8, 1])})` }}>
             <Baguette size={base * 0.42} />
           </div>
-          <Tag value="€1.95" p={rightTag} tilt={7} />
+          <Tag value="€1.95" p={rightTag} tilt={7} base={base} />
         </div>
 
         <div
@@ -222,6 +228,37 @@ const SceneHook: React.FC = () => {
 };
 
 // ---------------------------------------------------------------------------
+const Row: React.FC<{
+  glyph: React.ReactNode;
+  label: string;
+  p: number;
+  base: number;
+  accent?: boolean;
+}> = ({ glyph, label, p, base, accent }) => (
+  <div
+    style={{
+      display: "flex",
+      alignItems: "center",
+      gap: base * 0.03,
+      opacity: p,
+      transform: `translateY(${interpolate(p, [0, 1], [24, 0])}px)`,
+    }}
+  >
+    {glyph}
+    <div
+      style={{
+        fontFamily: F.marketing,
+        fontWeight: 600,
+        fontSize: base * 0.06,
+        color: accent ? ACCENT : C.text,
+        letterSpacing: "-0.02em",
+      }}
+    >
+      {label}
+    </div>
+  </div>
+);
+
 // Scene 2 — THE LENS: Big Mac Index → Baguette Index.
 // ---------------------------------------------------------------------------
 const SceneLens: React.FC = () => {
@@ -232,36 +269,6 @@ const SceneLens: React.FC = () => {
   const row1 = springIn(frame, vfps, TIMING.entrance, "SNAPPY");
   const arrow = springIn(frame, vfps, TIMING.entrance + 24, "LIQUID");
   const row2 = springIn(frame, vfps, TIMING.entrance + 40, "SNAPPY");
-
-  const Row: React.FC<{ glyph: React.ReactNode; label: string; p: number; accent?: boolean }> = ({
-    glyph,
-    label,
-    p,
-    accent,
-  }) => (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: base * 0.03,
-        opacity: p,
-        transform: `translateY(${interpolate(p, [0, 1], [24, 0])}px)`,
-      }}
-    >
-      {glyph}
-      <div
-        style={{
-          fontFamily: F.marketing,
-          fontWeight: 600,
-          fontSize: base * 0.06,
-          color: accent ? ACCENT : C.text,
-          letterSpacing: "-0.02em",
-        }}
-      >
-        {label}
-      </div>
-    </div>
-  );
 
   return (
     <AbsoluteFill style={{ background: C.bg }}>
@@ -276,7 +283,7 @@ const SceneLens: React.FC = () => {
           gap: base * 0.045,
         }}
       >
-        <Row glyph={<Burger size={base * 0.13} />} label="The Big Mac Index" p={row1} />
+        <Row glyph={<Burger size={base * 0.13} />} label="The Big Mac Index" p={row1} base={base} />
         <div
           style={{
             fontSize: base * 0.07,
@@ -287,7 +294,7 @@ const SceneLens: React.FC = () => {
         >
           ↓
         </div>
-        <Row glyph={<Baguette size={base * 0.2} rotate={-12} />} label="The Baguette Index" p={row2} accent />
+        <Row glyph={<Baguette size={base * 0.2} rotate={-12} />} label="The Baguette Index" p={row2} base={base} accent />
         <div
           style={{
             marginTop: base * 0.03,
@@ -393,7 +400,7 @@ const SceneData: React.FC = () => {
 
   const hexSize = base * 0.46;
   const pins = scatter(46, 50, 52, 33);
-  const count = useCount(frame, vfps, 10000, TIMING.entrance + 10);
+  const count = countUp(frame, vfps, 10000, TIMING.entrance + 10);
 
   const labelIn = springIn(frame, vfps, TIMING.entrance + 30, "SNAPPY");
   const chainBase = 150; // chain starts ~5s in
@@ -538,7 +545,7 @@ const SceneCalls: React.FC = () => {
         }}
       >
         {stats.map((s, i) => {
-          const count = useCount(frame, vfps, s.value, s.delay);
+          const count = countUp(frame, vfps, s.value, s.delay);
           const p = springIn(frame, vfps, s.delay, "SNAPPY");
           const drift = ambientDrift(frame, 2, 80 + i * 13, `stat${i}`);
           return (
