@@ -689,5 +689,38 @@ head("resizing a placed scene moves its exit; resizing a window moves the window
 }
 
 
+head("Smart trim keeps words that only sometimes are filler");
+{
+  const w = (text: string, start: number, end: number) => ({ text, start, end });
+  // "I like it" with no pauses: `like` is load-bearing and must survive.
+  const embedded: Transcript = {
+    words: [w("I", 0, 0.2), w("like", 0.2, 0.5), w("it", 0.5, 0.8)],
+    durationSeconds: 1, segments: [], text: "I like it",
+  } as unknown as Transcript;
+  const keptEmbedded = planCuts(embedded, DEFAULT_THRESHOLDS);
+  a(keptEmbedded.removed.length === 0, "an embedded hedge is not a filler");
+
+  // A floating "like", with real silence either side, is a verbal tic.
+  const floating: Transcript = {
+    words: [w("so", 0, 0.3), w("like", 1.0, 1.3), w("anyway", 2.2, 2.7)],
+    durationSeconds: 3, segments: [], text: "so like anyway",
+  } as unknown as Transcript;
+  const cut = planCuts(floating, DEFAULT_THRESHOLDS);
+  a(cut.removed.some((r) => r.reason === "filler"), "a floating hedge is dropped");
+
+  // "um" is a sound, not a word — always out, pause or no pause.
+  const um: Transcript = {
+    words: [w("and", 0, 0.2), w("um", 0.2, 0.4), w("then", 0.4, 0.7)],
+    durationSeconds: 1, segments: [], text: "and um then",
+  } as unknown as Transcript;
+  a(planCuts(um, DEFAULT_THRESHOLDS).removed.some((r) => r.reason === "filler"),
+    "a disfluency needs no pause around it");
+
+  a(DEFAULT_THRESHOLDS.maxGapSeconds >= 0.8, "ordinary breath pauses survive");
+  a(DEFAULT_THRESHOLDS.paddingSeconds >= 0.1, "cuts leave room around the consonant");
+  a(!DEFAULT_THRESHOLDS.fillers.includes("like"), "'like' is no longer an always-drop");
+}
+
+
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);
 if (fail) process.exit(1);

@@ -77,9 +77,11 @@ export default function SmartTrimDialog({
   const [confirmReplace, setConfirmReplace] = useState(false);
 
   // Threshold controls (re-planned client-side)
-  const [maxGap, setMaxGap] = useState(0.6);
+  // Kept in step with DEFAULT_THRESHOLDS — the dialog posts these over the
+  // server defaults, so a stale number here silently undoes the tuning.
+  const [maxGap, setMaxGap] = useState(0.9);
   const [removeFillers, setRemoveFillers] = useState(true);
-  const [padding, setPadding] = useState(0.05);
+  const [padding, setPadding] = useState(0.12);
 
   // Reset on open
   useEffect(() => {
