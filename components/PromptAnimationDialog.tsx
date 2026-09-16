@@ -65,8 +65,8 @@ export default function PromptAnimationDialog({
     <Modal open={open} onClose={busy ? () => {} : onClose} title="Prompt an animation" width={520}>
       <div style={{ padding: "14px 20px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
         <div style={{ fontSize: 12, color: "var(--text-1)" }}>
-          It lands on a new track at the playhead, in your brand's style. Everything
-          about it stays editable afterwards.
+          {"It lands on a new track at the playhead, in your brand's style. Everything"}
+          {" about it stays editable afterwards."}
         </div>
 
         <textarea

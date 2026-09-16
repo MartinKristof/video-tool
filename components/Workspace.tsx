@@ -44,7 +44,18 @@ export default function Workspace({
   const [deleteConfirm, setDeleteConfirm] = useState<ProjectMeta | null>(null);
   const [storageOpen, setStorageOpen] = useState(false);
 
+  async function fetchProjects() {
+    try {
+      const res = await fetch("/api/projects");
+      const data = await res.json();
+      setProjects(data);
+    } catch (err) {
+      console.error("Failed to load projects:", err);
+    }
+  }
+
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- setState runs after the await, not synchronously
     fetchProjects();
     fetch("/api/collections")
       .then((r) => r.json())
@@ -66,16 +77,6 @@ export default function Workspace({
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, [selectedType, modalOpen, deleteConfirm]);
-
-  async function fetchProjects() {
-    try {
-      const res = await fetch("/api/projects");
-      const data = await res.json();
-      setProjects(data);
-    } catch (err) {
-      console.error("Failed to load projects:", err);
-    }
-  }
 
   // Prompts for a name and creates a collection; returns it (or null if cancelled).
   async function createCollection(): Promise<Collection | null> {
